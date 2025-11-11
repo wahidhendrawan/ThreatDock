@@ -19,6 +19,10 @@ function Filters({
   setSeverity,
   source,
   setSource,
+  status,
+  setStatus,
+  attackPhase,
+  setAttackPhase,
   startDate,
   setStartDate,
   endDate,
@@ -34,6 +38,7 @@ function Filters({
           <option value="High">High</option>
           <option value="Medium">Medium</option>
           <option value="Low">Low</option>
+          <option value="Unknown">Unknown</option>
         </select>
       </label>
       <label>
@@ -51,6 +56,38 @@ function Filters({
           <option value="BleepingComputer">BleepingComputer</option>
           <option value="Dark Reading">Dark Reading</option>
           <option value="Krebs on Security">Krebs on Security</option>
+          {/* Additional sources */}
+          <option value="MISP">MISP</option>
+          <option value="IntelOwl">IntelOwl</option>
+          <option value="YARA/Sigma">YARA/Sigma</option>
+        </select>
+      </label>
+      <label>
+        Status:
+        <select value={status} onChange={e => setStatus(e.target.value)}>
+          <option value="">All</option>
+          <option value="Open">Open</option>
+          <option value="In Progress">In Progress</option>
+          <option value="Resolved">Resolved</option>
+        </select>
+      </label>
+      <label>
+        Attack Phase:
+        <select value={attackPhase} onChange={e => setAttackPhase(e.target.value)}>
+          <option value="">All</option>
+          <option value="Unknown">Unknown</option>
+          <option value="Initial Access">Initial Access</option>
+          <option value="Execution">Execution</option>
+          <option value="Persistence">Persistence</option>
+          <option value="Privilege Escalation">Privilege Escalation</option>
+          <option value="Defense Evasion">Defense Evasion</option>
+          <option value="Credential Access">Credential Access</option>
+          <option value="Discovery">Discovery</option>
+          <option value="Lateral Movement">Lateral Movement</option>
+          <option value="Collection">Collection</option>
+          <option value="Command and Control">Command and Control</option>
+          <option value="Exfiltration">Exfiltration</option>
+          <option value="Impact">Impact</option>
         </select>
       </label>
       <label>

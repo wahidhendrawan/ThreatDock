@@ -11,6 +11,12 @@
   - **OTX Pulses** – integrates with the AlienVault Open Threat Exchange API.  When you provide an API key, the backend queries your subscribed pulses (`/api/v1/pulses/subscribed`) and converts each pulse into a dashboard alert【603937255844768†L49-L52】.  OTX pulses are treated as medium‑severity items since the API does not include explicit severity ratings.
   - **ThreatFox IOCs** – integrates with the threat intelligence platform from abuse.ch.  Using a free Auth‑Key, the backend calls the ThreatFox API (`/api/v1` with `query=get_iocs`) to retrieve indicators of compromise (IOCs) for the last seven days【916006223225416†L44-L52】.  Each IOC is shown as a high‑severity alert with a link back to the ThreatFox portal.
 
+  - **MISP events** – ThreatDock can ingest events from your own MISP instance.  The backend uses the `/events/index` endpoint of the MISP Automation API to fetch recent events and maps the numeric `threat_level_id` field (1 = High, 2 = Medium, 3 = Low) to a corresponding severity【380436334720828†L240-L319】.  Provide `MISP_URL` and `MISP_API_KEY` in your environment to enable this feature.
+
+  - **IntelOwl analysis** – A placeholder integration exists for IntelOwl, an OSINT analysis platform.  To activate, supply `INTELO_OWL_API_KEY` and implement calls in `backend/services/intelowl.js`.  By default this integration is disabled.
+
+  - **YARA/Sigma rules** – ThreatDock includes a stub to match alerts against YARA and Sigma rules.  You can integrate with an existing YARA/Sigma service (for example, your `yara-sigma-webui` project) by implementing `backend/services/yaraSigma.js`.  Matched alerts are returned as a separate source.
+
   - **RSS Feeds** – ThreatDock can also ingest news and analysis from curated cybersecurity RSS feeds.  The backend parses several well‑known feeds drawn from the *awesome-threat-intel-rss* project, including:
 
     - **SANS Internet Storm Center** (feed: `https://isc.sans.edu/rssfeed_full.xml`)【36635210653818†L361-L366】 – a global cooperative monitor for cyber threats and internet security.
@@ -24,6 +30,8 @@
 - **REST API** – all alerts are stored in a local SQLite database and exposed via `/alerts`.  Query parameters allow filtering by severity, source, and date range.  Results are ordered by severity and recency.
 
 - **Interactive dashboard** – a React frontend displays alerts in a sortable table.  Users can filter by severity (Critical, High, Medium, Low), data source (GitHub, NVD, Red Hat, OTX, ThreatFox), and date range.  Clicking an alert opens the original advisory or IOC page in a new tab.
+  - The table now includes columns for **Attack Phase** and **Status**.  Attack phase corresponds to the MITRE ATT&CK stage (currently defaulting to “Unknown” until future classification is implemented).  Status can be changed via a dropdown to “Open”, “In Progress” or “Resolved”.
+  - An “Alert Statistics” section visualises the distribution of alerts by severity and shows the number of alerts over time using simple bar and line charts (powered by the Recharts library).
 
 - **Containerised deployment** – the application is divided into backend and frontend services.  A single `docker‑compose.yml` spins up both containers.  Environment variables are defined in `backend/.env` to configure API keys without modifying code.
 
@@ -50,6 +58,10 @@
    - `MISP_URL` and `MISP_API_KEY` – placeholders for future integration with a MISP instance.
    - `INTELO_OWL_API_KEY` – reserved for additional OSINT sources.
 
+   - `SLACK_WEBHOOK_URL` – optional Slack Incoming Webhook URL.  If provided, ThreatDock will send notifications for alerts whose severity is equal to or above the value of `NOTIFY_THRESHOLD`.
+   - `NOTIFY_THRESHOLD` – severity threshold for Slack notifications (e.g. Critical, High, Medium).  Defaults to High.
+   - `AUTH_USER` and `AUTH_PASSWORD` – set these to enable HTTP basic authentication for the backend API.  Leave blank to disable auth.
+
 4. **Build and run the containers**:
 
    ```bash
@@ -61,11 +73,20 @@
 ## Usage
 
 - **Filtering alerts:** Use the dropdowns at the top of the page to select a severity level and source.  Date pickers allow you to restrict results to a start and end date.  The table updates automatically when filters are changed.
+  - Additional filters let you select a **status** (Open, In Progress, Resolved) and an **attack phase**.  Attack phase values correspond to MITRE ATT&CK tactic categories; at present they default to “Unknown”.
 
 - **API queries:** The backend API supports the same filters via query parameters.  For example, to retrieve only high‑severity ThreatFox IOCs:
 
   ```bash
   curl 'http://localhost:5000/alerts?severity=High&source=ThreatFox'
+  ```
+
+  To update the status of an alert (e.g. mark alert ID 123 as “Resolved”), send a PATCH request:
+
+  ```bash
+  curl -X PATCH 'http://localhost:5000/alerts/123' \
+       -H 'Content-Type: application/json' \
+       -d '{"status":"Resolved"}'
   ```
 
 ## Extending the project
@@ -75,6 +96,8 @@ ThreatDock is designed to be extensible.  To add another threat intelligence sou
 1. Create a new module under `backend/services/` that uses `axios` to call the external API and returns an array of objects.
 2. Normalise the data into the common alert schema (`source`, `externalId`, `title`, `severity`, `date`, `url`) in `fetchAllSources()` within `backend/app.js`.
 3. Add an entry in the frontend filter component to expose the new source.
+
+In addition, the backend exposes a stub for Slack notifications and basic HTTP authentication.  To enable Slack notifications, set `SLACK_WEBHOOK_URL` and optionally `NOTIFY_THRESHOLD` in your environment.  To protect the API with simple credentials, set `AUTH_USER` and `AUTH_PASSWORD`.
 
 ## Licensing and fair use
 

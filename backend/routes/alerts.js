@@ -10,7 +10,7 @@ module.exports = function createAlertsRouter(db) {
 
   // GET /alerts - return all alerts with optional filters
   router.get('/', (req, res) => {
-    const { severity, source, start, end } = req.query;
+    const { severity, source, start, end, status } = req.query;
     let query = 'SELECT * FROM alerts';
     const conditions = [];
     const params = [];
@@ -31,6 +31,10 @@ module.exports = function createAlertsRouter(db) {
       conditions.push('date <= ?');
       params.push(end);
     }
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -48,6 +52,25 @@ module.exports = function createAlertsRouter(db) {
         return res.status(500).send('Internal server error');
       }
       res.json(rows);
+    });
+  });
+
+  // PATCH /alerts/:id - update the status of an alert
+  router.patch('/:id', (req, res) => {
+    const id = req.params.id;
+    const { status } = req.body;
+    if (!status) {
+      return res.status(400).send('Missing status');
+    }
+    db.run('UPDATE alerts SET status = ? WHERE id = ?', [status, id], function(err) {
+      if (err) {
+        console.error('Database update error:', err);
+        return res.status(500).send('Internal server error');
+      }
+      if (this.changes === 0) {
+        return res.status(404).send('Alert not found');
+      }
+      res.json({ id, status });
     });
   });
 

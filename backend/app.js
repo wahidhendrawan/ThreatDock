@@ -9,6 +9,12 @@ const nvdService = require('./services/nvd');
 const redhatService = require('./services/redhat');
 const otxService = require('./services/otx');
 const threatfoxService = require('./services/threatfox');
+const mispService = require('./services/misp');
+const intelOwlService = require('./services/intelowl');
+const yaraSigmaService = require('./services/yaraSigma');
+const notificationService = require('./services/notifications');
+
+const authMiddleware = require('./middleware/auth');
 const rssService = require('./services/rss');
 
 const app = express();
@@ -17,6 +23,12 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Apply HTTP Basic authentication middleware.  If environment variables
+// AUTH_USER and AUTH_PASSWORD are not set, authMiddleware will
+// simply pass requests through.  Otherwise all requests will
+// require valid credentials in the Authorization header.
+app.use(authMiddleware);
 
 // Initialize SQLite database
 const db = new sqlite3.Database('alerts.db');
@@ -28,8 +40,15 @@ db.run(`CREATE TABLE IF NOT EXISTS alerts (
   title TEXT,
   severity TEXT,
   date TEXT,
-  url TEXT
+  url TEXT,
+  status TEXT DEFAULT 'Open',
+  attack_phase TEXT DEFAULT 'Unknown'
 )`);
+
+// Attempt to add status and attack_phase columns if they are missing.  SQLite
+// will throw an error if the column already exists; we suppress the error.
+db.run("ALTER TABLE alerts ADD COLUMN status TEXT DEFAULT 'Open'", () => {});
+db.run("ALTER TABLE alerts ADD COLUMN attack_phase TEXT DEFAULT 'Unknown'", () => {});
 
 // Utility: map Red Hat severities to standardized values
 function mapRedHatSeverity(sev) {
@@ -45,13 +64,16 @@ function mapRedHatSeverity(sev) {
 async function fetchAllSources() {
   try {
     // Fetch data in parallel
-    const [ghData, nvdData, rhData, otxData, tfData, rssData] = await Promise.all([
+    const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.all([
       githubService.fetchGitHubAdvisories(),
       nvdService.fetchNvdCves(),
       redhatService.fetchRedHatCves(),
       otxService.fetchOtxPulses(),
       threatfoxService.fetchThreatFoxIocs(),
-      rssService.fetchRssFeeds()
+      rssService.fetchRssFeeds(),
+      mispService.fetchMispEvents(),
+      intelOwlService.fetchIntelOwlData(),
+      yaraSigmaService.fetchYaraSigmaMatches()
     ]);
 
     const alerts = [];
@@ -65,7 +87,9 @@ async function fetchAllSources() {
           title: adv.summary || adv.description || 'GitHub Advisory',
           severity: adv.severity ? adv.severity.charAt(0).toUpperCase() + adv.severity.slice(1) : 'Unknown',
           date: adv.published_at || adv.updated_at || '',
-          url: adv.html_url || (adv.ghsa_id ? `https://github.com/advisories/${adv.ghsa_id}` : '')
+          url: adv.html_url || (adv.ghsa_id ? `https://github.com/advisories/${adv.ghsa_id}` : ''),
+          status: 'Open',
+          attack_phase: 'Unknown'
         });
       }
     }
@@ -100,7 +124,9 @@ async function fetchAllSources() {
           title,
           severity,
           date: datePublished,
-          url: `https://nvd.nist.gov/vuln/detail/${cveId}`
+          url: `https://nvd.nist.gov/vuln/detail/${cveId}`,
+          status: 'Open',
+          attack_phase: 'Unknown'
         });
       }
     }
@@ -119,7 +145,9 @@ async function fetchAllSources() {
           title,
           severity,
           date: datePublished,
-          url: `https://access.redhat.com/security/cve/${cveId}`
+          url: `https://access.redhat.com/security/cve/${cveId}`,
+          status: 'Open',
+          attack_phase: 'Unknown'
         });
       }
     }
@@ -133,7 +161,9 @@ async function fetchAllSources() {
           title: pulse.name || 'OTX Pulse',
           severity: 'Medium', // OTX pulses do not provide severity; assign Medium
           date: pulse.modified || pulse.created || '',
-          url: pulse.id ? `https://otx.alienvault.com/pulse/${pulse.id}` : ''
+          url: pulse.id ? `https://otx.alienvault.com/pulse/${pulse.id}` : '',
+          status: 'Open',
+          attack_phase: 'Unknown'
         });
       }
     }
@@ -148,6 +178,9 @@ async function fetchAllSources() {
           severity: 'High', // treat ThreatFox IOCs as high severity
           date: ioc.first_seen || '',
           url: ioc.id ? `https://threatfox.abuse.ch/ioc/${ioc.id}` : ''
+        ,
+          status: 'Open',
+          attack_phase: 'Unknown'
         });
       }
     }
@@ -161,7 +194,57 @@ async function fetchAllSources() {
           title: article.title || 'RSS Article',
           severity: 'Low', // treat news articles as low severity by default
           date: article.date || '',
-          url: article.url || ''
+          url: article.url || '',
+          status: 'Open',
+          attack_phase: 'Unknown'
+        });
+      }
+    }
+
+    // Process MISP events
+    if (Array.isArray(mispData)) {
+      for (const evt of mispData) {
+        alerts.push({
+          source: evt.source,
+          externalId: evt.externalId || '',
+          title: evt.title || 'MISP Event',
+          severity: evt.severity || 'Medium',
+          date: evt.date || '',
+          url: evt.url || '',
+          status: 'Open',
+          attack_phase: 'Unknown'
+        });
+      }
+    }
+
+    // Process IntelOwl data (stub)
+    if (Array.isArray(intelData)) {
+      for (const item of intelData) {
+        alerts.push({
+          source: item.source || 'IntelOwl',
+          externalId: item.externalId || '',
+          title: item.title || 'IntelOwl',
+          severity: item.severity || 'Medium',
+          date: item.date || '',
+          url: item.url || '',
+          status: 'Open',
+          attack_phase: 'Unknown'
+        });
+      }
+    }
+
+    // Process YARA/Sigma matches (stub)
+    if (Array.isArray(yaraData)) {
+      for (const match of yaraData) {
+        alerts.push({
+          source: match.source || 'YARA/Sigma',
+          externalId: match.externalId || '',
+          title: match.title || 'YARA/Sigma Match',
+          severity: match.severity || 'Medium',
+          date: match.date || '',
+          url: match.url || '',
+          status: 'Open',
+          attack_phase: match.attack_phase || 'Unknown'
         });
       }
     }
@@ -169,14 +252,30 @@ async function fetchAllSources() {
     // Persist alerts to DB
     db.serialize(() => {
       db.run('DELETE FROM alerts');
-      const stmt = db.prepare('INSERT INTO alerts (source, externalId, title, severity, date, url) VALUES (?, ?, ?, ?, ?, ?)');
+      const stmt = db.prepare('INSERT INTO alerts (source, externalId, title, severity, date, url, status, attack_phase) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
       for (const alert of alerts) {
-        stmt.run(alert.source, alert.externalId, alert.title, alert.severity, alert.date, alert.url);
+        stmt.run(
+          alert.source,
+          alert.externalId,
+          alert.title,
+          alert.severity,
+          alert.date,
+          alert.url,
+          alert.status || 'Open',
+          alert.attack_phase || 'Unknown'
+        );
       }
       stmt.finalize();
     });
 
     console.log(`Fetched and stored ${alerts.length} alerts.`);
+
+    // Send notifications after storing alerts
+    try {
+      await notificationService.sendSlackNotifications(alerts);
+    } catch (notifyErr) {
+      console.error('Error sending notifications:', notifyErr.message);
+    }
   } catch (err) {
     console.error('Error fetching alerts:', err);
   }
