@@ -1,4 +1,4 @@
-FROM node:18-alpine AS build
+FROM node:25.4.0-alpine AS build
 WORKDIR /app
 
 # Install dependencies
