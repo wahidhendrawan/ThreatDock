@@ -27,7 +27,7 @@ function App() {
     if (endDate) params.push(`end=${endDate}`);
     const queryString = params.length ? `?${params.join('&')}` : '';
     // Fetch alerts from backend
-    fetch(`http://localhost:5000/alerts${queryString}`)
+    fetch(`http://localhost:5002/alerts${queryString}`)
       .then(res => res.json())
       .then(data => setAlerts(data))
       .catch(err => console.error('Error fetching alerts:', err));
@@ -41,7 +41,7 @@ function App() {
    * @param {string} newStatus - The new status value
    */
   const handleStatusChange = (id, newStatus) => {
-    fetch(`http://localhost:5000/alerts/${id}`, {
+    fetch(`http://localhost:5002/alerts/${id}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json'
@@ -68,23 +68,31 @@ function App() {
   });
 
   return (
-    <div className="App" style={{ padding: '1rem', fontFamily: 'Arial, sans-serif' }}>
-      <h1>ThreatDock Security Dashboard</h1>
-      <Filters
-        severity={severityFilter}
-        setSeverity={setSeverityFilter}
-        source={sourceFilter}
-        setSource={setSourceFilter}
-        status={statusFilter}
-        setStatus={setStatusFilter}
-        attackPhase={attackPhaseFilter}
-        setAttackPhase={setAttackPhaseFilter}
-        startDate={startDate}
-        setStartDate={setStartDate}
-        endDate={endDate}
-        setEndDate={setEndDate}
-      />
+    <div className="App">
+      <div className="dashboard-header">
+        <h1>ThreatDock Security Dashboard</h1>
+        <p style={{ color: 'var(--text-muted)' }}>Monitor and analyze security alerts across your environment.</p>
+      </div>
+
+      <div className="card">
+        <Filters
+          severity={severityFilter}
+          setSeverity={setSeverityFilter}
+          source={sourceFilter}
+          setSource={setSourceFilter}
+          status={statusFilter}
+          setStatus={setStatusFilter}
+          attackPhase={attackPhaseFilter}
+          setAttackPhase={setAttackPhaseFilter}
+          startDate={startDate}
+          setStartDate={setStartDate}
+          endDate={endDate}
+          setEndDate={setEndDate}
+        />
+      </div>
+
       <Stats alerts={filteredAlerts} />
+
       <AlertList alerts={filteredAlerts} onStatusChange={handleStatusChange} />
     </div>
   );
