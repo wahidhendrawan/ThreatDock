@@ -1,19 +1,5 @@
 import React from 'react';
 
-/**
- * Filter component that allows users to narrow down alerts by severity,
- * source and date range.
- *
- * Props:
- *  - severity: current severity filter
- *  - setSeverity: function to update severity
- *  - source: current source filter
- *  - setSource: function to update source
- *  - startDate: current start date
- *  - setStartDate: function to update start date
- *  - endDate: current end date
- *  - setEndDate: function to update end date
- */
 function Filters({
   severity,
   setSeverity,
@@ -29,9 +15,9 @@ function Filters({
   setEndDate
 }) {
   return (
-    <div className="filters" style={{ marginBottom: '1rem', display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
-      <label>
-        Severity:
+    <div className="filters-container">
+      <div className="filter-group">
+        <label>Severity</label>
         <select value={severity} onChange={e => setSeverity(e.target.value)}>
           <option value="">All</option>
           <option value="Critical">Critical</option>
@@ -40,9 +26,10 @@ function Filters({
           <option value="Low">Low</option>
           <option value="Unknown">Unknown</option>
         </select>
-      </label>
-      <label>
-        Source:
+      </div>
+
+      <div className="filter-group">
+        <label>Source</label>
         <select value={source} onChange={e => setSource(e.target.value)}>
           <option value="">All</option>
           <option value="GitHub">GitHub</option>
@@ -50,29 +37,28 @@ function Filters({
           <option value="Red Hat">Red Hat</option>
           <option value="OTX">OTX</option>
           <option value="ThreatFox">ThreatFox</option>
-          {/* RSS-based sources */}
           <option value="SANS Internet Storm Center">SANS Internet Storm Center</option>
           <option value="US‑CERT Alerts">US‑CERT Alerts</option>
           <option value="BleepingComputer">BleepingComputer</option>
-          <option value="Dark Reading">Dark Reading</option>
           <option value="Krebs on Security">Krebs on Security</option>
-          {/* Additional sources */}
           <option value="MISP">MISP</option>
           <option value="IntelOwl">IntelOwl</option>
           <option value="YARA/Sigma">YARA/Sigma</option>
         </select>
-      </label>
-      <label>
-        Status:
+      </div>
+
+      <div className="filter-group">
+        <label>Status</label>
         <select value={status} onChange={e => setStatus(e.target.value)}>
           <option value="">All</option>
           <option value="Open">Open</option>
           <option value="In Progress">In Progress</option>
           <option value="Resolved">Resolved</option>
         </select>
-      </label>
-      <label>
-        Attack Phase:
+      </div>
+
+      <div className="filter-group">
+        <label>Attack Phase</label>
         <select value={attackPhase} onChange={e => setAttackPhase(e.target.value)}>
           <option value="">All</option>
           <option value="Unknown">Unknown</option>
@@ -89,15 +75,17 @@ function Filters({
           <option value="Exfiltration">Exfiltration</option>
           <option value="Impact">Impact</option>
         </select>
-      </label>
-      <label>
-        Start Date:
+      </div>
+
+      <div className="filter-group">
+        <label>Start Date</label>
         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-      </label>
-      <label>
-        End Date:
+      </div>
+
+      <div className="filter-group">
+        <label>End Date</label>
         <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
-      </label>
+      </div>
     </div>
   );
 }
