@@ -97,7 +97,6 @@ function App() {
   const handleLogout = () => {
     setCredentials(null);
     setNeedsAuth(true);
-          setCredentials(null);
   };
 
   if (needsAuth && !credentials) {
