@@ -18,7 +18,7 @@ const authMiddleware = require('./middleware/auth');
 const rssService = require('./services/rss');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5002;
 
 // Middleware
 app.use(cors());
@@ -31,7 +31,8 @@ app.use(express.json());
 app.use(authMiddleware);
 
 // Initialize SQLite database
-const db = new sqlite3.Database('alerts.db');
+const dbPath = process.env.DB_PATH || 'alerts.db';
+const db = new sqlite3.Database(dbPath);
 // Create alerts table if it does not exist
 db.run(`CREATE TABLE IF NOT EXISTS alerts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
