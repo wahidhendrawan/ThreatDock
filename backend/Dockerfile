@@ -9,9 +9,10 @@ RUN npm install
 COPY . .
 
 # Expose backend port
-EXPOSE 5000
+EXPOSE 5002
 
 # Use node user for better security
+RUN chown -R node:node /app
 USER node
 
 # Start the Express application
