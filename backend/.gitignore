@@ -1,0 +1,4 @@
+node_modules/
+alerts.db
+npm_output.log
+.env

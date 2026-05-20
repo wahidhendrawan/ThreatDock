@@ -1,44 +1,21 @@
 const Parser = require('rss-parser');
 
-// Instantiate a single parser instance
-const parser = new Parser();
-
-// Define a curated list of RSS feeds to ingest.  These feeds are drawn from
-// the open‑source “awesome‑threat‑intel‑rss” project and cover trusted
-// cybersecurity news sources such as SANS, US‑CERT, BleepingComputer and more.
-// Each entry includes a human‑readable name and the feed URL.  To add more
-// feeds, append an object with `name` and `url` properties to this array.
-const feedList = [
-  {
-    name: 'SANS Internet Storm Center',
-    url: 'https://isc.sans.edu/rssfeed_full.xml'
-  },
-  {
-    name: 'US‑CERT Alerts',
-    url: 'https://us-cert.cisa.gov/ncas/alerts.xml'
-  },
-  {
-    name: 'BleepingComputer',
-    url: 'https://www.bleepingcomputer.com/feed'
-  },
-  {
-    name: 'Dark Reading',
-    url: 'https://www.darkreading.com/rss/all.xml'
-  },
-  {
-    name: 'Krebs on Security',
-    url: 'http://krebsonsecurity.com/feed/'
+// Use node-fetch to provide custom behavior if needed, or simply standard custom headers
+const parser = new Parser({
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5'
   }
+});
+
+const feedList = [
+  { name: 'SANS Internet Storm Center', url: 'https://isc.sans.edu/rssfeed_full.xml' },
+  { name: 'US-CERT Alerts', url: 'https://us-cert.cisa.gov/ncas/alerts.xml' },
+  { name: 'BleepingComputer', url: 'https://www.bleepingcomputer.com/feed' },
+  { name: 'Krebs on Security', url: 'http://krebsonsecurity.com/feed/' }
 ];
 
-/**
- * Fetch recent articles from all configured RSS feeds.  Each feed is parsed
- * using `rss-parser`, and the resulting items are normalised to a common
- * alert format.  Items missing a GUID will fall back to their link as the
- * external identifier.  The date field uses the ISO string if available.
- *
- * @returns {Promise<Array<{source: string, externalId: string, title: string, date: string, url: string}>>}
- */
 async function fetchRssFeeds() {
   const results = [];
   for (const feed of feedList) {
@@ -56,9 +33,6 @@ async function fetchRssFeeds() {
         }
       }
     } catch (err) {
-      // Log and continue on errors so that one misbehaving feed does not
-      // interrupt the aggregation of others.  The error message is kept
-      // concise to avoid leaking sensitive information.
       console.error(`Failed to fetch RSS feed ${feed.url}: ${err.message}`);
     }
   }
