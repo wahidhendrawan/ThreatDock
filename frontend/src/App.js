@@ -27,7 +27,7 @@ function App() {
     if (endDate) params.push(`end=${endDate}`);
     const queryString = params.length ? `?${params.join('&')}` : '';
     // Fetch alerts from backend
-    fetch(`http://localhost:5000/alerts${queryString}`)
+    fetch(`http://localhost:5002/alerts${queryString}`)
       .then(res => res.json())
       .then(data => setAlerts(data))
       .catch(err => console.error('Error fetching alerts:', err));
@@ -41,7 +41,7 @@ function App() {
    * @param {string} newStatus - The new status value
    */
   const handleStatusChange = (id, newStatus) => {
-    fetch(`http://localhost:5000/alerts/${id}`, {
+    fetch(`http://localhost:5002/alerts/${id}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json'
