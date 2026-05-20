@@ -1,35 +1,43 @@
 import React from 'react';
 
-/**
- * Component that renders a table of alerts.
- *
- * Props:
- *  - alerts: array of alert objects to display
- */
 function AlertList({ alerts, onStatusChange }) {
+  if (!alerts || alerts.length === 0) {
+    return (
+      <div className="card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+        <p>No alerts found matching your criteria.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="alert-list" style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div className="table-container">
+      <table>
         <thead>
           <tr>
-            <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: '0.5rem' }}>Source</th>
-            <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: '0.5rem' }}>Severity</th>
-            <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: '0.5rem' }}>Date</th>
-            <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: '0.5rem' }}>Attack Phase</th>
-            <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: '0.5rem' }}>Status</th>
-            <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: '0.5rem' }}>Alert</th>
+            <th>Source</th>
+            <th>Severity</th>
+            <th>Date</th>
+            <th>Attack Phase</th>
+            <th>Status</th>
+            <th>Alert Details</th>
           </tr>
         </thead>
         <tbody>
           {alerts.map(alert => (
-            <tr key={alert.id || `${alert.source}-${alert.externalId}`}
-                style={{ borderBottom: '1px solid #eee' }}>
-              <td style={{ padding: '0.5rem' }}>{alert.source}</td>
-              <td style={{ padding: '0.5rem' }}>{alert.severity}</td>
-              <td style={{ padding: '0.5rem' }}>{alert.date ? new Date(alert.date).toLocaleString() : ''}</td>
-              <td style={{ padding: '0.5rem' }}>{alert.attack_phase || 'Unknown'}</td>
-              <td style={{ padding: '0.5rem' }}>
+            <tr key={alert.id || `${alert.source}-${alert.externalId}`}>
+              <td>{alert.source}</td>
+              <td>
+                <span className={`severity-badge severity-${alert.severity || 'Unknown'}`}>
+                  {alert.severity || 'Unknown'}
+                </span>
+              </td>
+              <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
+                {alert.date ? new Date(alert.date).toLocaleDateString() : 'N/A'}
+              </td>
+              <td>{alert.attack_phase || 'Unknown'}</td>
+              <td>
                 <select
+                  className="status-select"
                   value={alert.status || 'Open'}
                   onChange={e => {
                     const newStatus = e.target.value;
@@ -41,9 +49,9 @@ function AlertList({ alerts, onStatusChange }) {
                   <option value="Resolved">Resolved</option>
                 </select>
               </td>
-              <td style={{ padding: '0.5rem' }}>
+              <td>
                 {alert.url ? (
-                  <a href={alert.url} target="_blank" rel="noopener noreferrer">
+                  <a className="alert-link" href={alert.url} target="_blank" rel="noopener noreferrer">
                     {alert.title}
                   </a>
                 ) : (

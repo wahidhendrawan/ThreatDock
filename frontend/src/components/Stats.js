@@ -12,19 +12,7 @@ import {
   Legend
 } from 'recharts';
 
-/**
- * Statistics component
- *
- * Renders simple visualisations using Recharts to show the distribution of
- * alerts by severity and the number of alerts over time.  The data is
- * derived from the list of alert objects passed as props.  If no alerts
- * are available, the charts render nothing.
- *
- * Props:
- *  - alerts: array of alert objects
- */
 function Stats({ alerts }) {
-  // Build a severity distribution map
   const severityCounts = alerts.reduce((acc, alert) => {
     const sev = alert.severity || 'Unknown';
     acc[sev] = (acc[sev] || 0) + 1;
@@ -35,7 +23,6 @@ function Stats({ alerts }) {
     count: severityCounts[key]
   }));
 
-  // Group alerts by date (YYYY-MM-DD)
   const dateCounts = alerts.reduce((acc, alert) => {
     if (!alert.date) return acc;
     const d = new Date(alert.date);
@@ -44,7 +31,7 @@ function Stats({ alerts }) {
     acc[dateKey] = (acc[dateKey] || 0) + 1;
     return acc;
   }, {});
-  // Convert to array sorted by date ascending
+
   const timeData = Object.keys(dateCounts)
     .sort()
     .map(key => ({ date: key, count: dateCounts[key] }));
@@ -54,34 +41,37 @@ function Stats({ alerts }) {
   }
 
   return (
-    <div className="statistics" style={{ marginTop: '2rem' }}>
-      <h2>Alert Statistics</h2>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2rem' }}>
-        <div style={{ flex: '1 1 300px', minWidth: '300px', height: '300px' }}>
-          <h3>Severity Distribution</h3>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={severityData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="severity" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="count" name="Count" />
-            </BarChart>
-          </ResponsiveContainer>
+    <div className="card">
+      <h2 style={{ marginBottom: '1.5rem', fontSize: '1.25rem' }}>Alert Statistics</h2>
+      <div className="stats-grid">
+        <div>
+          <h3 style={{ fontSize: '1rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>Severity Distribution</h3>
+          <div className="chart-wrapper">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={severityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="severity" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
+                <Bar dataKey="count" name="Alerts" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
-        <div style={{ flex: '1 1 300px', minWidth: '300px', height: '300px' }}>
-          <h3>Alerts Over Time</h3>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={timeData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="count" name="Count" />
-            </LineChart>
-          </ResponsiveContainer>
+
+        <div>
+          <h3 style={{ fontSize: '1rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>Alerts Over Time</h3>
+          <div className="chart-wrapper">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={timeData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <Tooltip contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
+                <Line type="monotone" dataKey="count" name="Alerts" stroke="#3b82f6" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       </div>
     </div>
