@@ -22,7 +22,7 @@ const navItems = [
   { path: '/settings', label: 'Settings', icon: <Settings size={20} /> },
 ];
 
-function Layout({ user, onLogout }) {
+function Layout({ user, onLogout, children }) {
   const [theme, setTheme] = useState(localStorage.getItem('threatdock_theme') || 'midnight');
 
   useEffect(() => {
@@ -79,7 +79,7 @@ function Layout({ user, onLogout }) {
       </aside>
 
       <main className="main-content">
-        <Outlet />
+        {children}
       </main>
     </div>
   );
