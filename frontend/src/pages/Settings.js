@@ -15,7 +15,7 @@ export default function Settings({ authData }) {
   const headers = { 
     'Content-Type': 'application/json',
     ...(authData?.token ? { 'Authorization': `Bearer ${authData.token}` } : 
-        authData?.basic ? { 'Authorization': `Basic ${btoa(authData.basic.username + ':' + authData.basic.password)}` } : {})
+        authData?.basic ? { 'Authorization': `Basic ${btoa(authData.basic.user + ':' + authData.basic.pass)}` } : {})
   };
 
   const API_BASE = '/api';

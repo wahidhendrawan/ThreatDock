@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import Filters from './components/Filters';
 import AlertList from './components/AlertList';
@@ -13,8 +13,20 @@ import Settings from './pages/Settings';
 
 const API_BASE = '';
 
-// Legacy Dashboard component using existing functionality
-function Dashboard({ alerts, filters, handlers }) {
+// Helper to build auth headers from authData
+function getAuthHeaders(authData) {
+  const headers = {};
+  if (authData?.token) {
+    headers['Authorization'] = `Bearer ${authData.token}`;
+  } else if (authData?.basic) {
+    const basicAuth = btoa(`${authData.basic.user}:${authData.basic.pass}`);
+    headers['Authorization'] = `Basic ${basicAuth}`;
+  }
+  return headers;
+}
+
+// Dashboard component
+function Dashboard({ alerts }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
@@ -49,44 +61,6 @@ function AlertsPage({ alerts, filters, handlers }) {
   );
 }
 
-// OAuth Callback Handler Component
-function OAuthCallback({ setAuthData }) {
-  const navigate = useNavigate();
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    if (code) {
-      fetch(`${API_BASE}/auth/callback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code })
-      })
-      .then(res => {
-        if (!res.ok) throw new Error('Callback exchange failed');
-        return res.json();
-      })
-      .then(data => {
-        localStorage.setItem('threatdock_token', data.access_token);
-        localStorage.setItem('threatdock_user', JSON.stringify(data.user));
-        setAuthData({ token: data.access_token, user: data.user });
-        navigate('/');
-      })
-      .catch(err => {
-        setError('Authentication failed: ' + err.message);
-      });
-    } else {
-      setError('No authorization code found in URL');
-    }
-  }, [navigate, setAuthData]);
-
-  if (error) {
-    return <div className="login-page"><div className="card text-red">{error} <a href="/">Return Home</a></div></div>;
-  }
-  return <div className="login-page"><div className="card">Authenticating with SSO...</div></div>;
-}
-
 function AppContent() {
   const [alerts, setAlerts] = useState([]);
   const [severityFilter, setSeverityFilter] = useState('');
@@ -95,10 +69,9 @@ function AppContent() {
   const [attackPhaseFilter, setAttackPhaseFilter] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  // Authentication State
-  const [ssoConfig, setSsoConfig] = useState(null);
-  const [needsAuth, setNeedsAuth] = useState(false);
+  // Authentication State — start with checking localStorage
   const [authData, setAuthData] = useState(() => {
     try {
       const token = localStorage.getItem('threatdock_token');
@@ -106,28 +79,26 @@ function AppContent() {
       if (token && userStr) {
         return { token, user: JSON.parse(userStr) };
       }
-      // Legacy basic auth check
       const savedBasic = localStorage.getItem('threatdock_credentials');
-      if (savedBasic) return { basic: JSON.parse(savedBasic), user: null };
+      if (savedBasic) {
+        const basic = JSON.parse(savedBasic);
+        return { basic, user: { name: basic.user } };
+      }
       return null;
     } catch {
       return null;
     }
   });
 
+  // needsAuth defaults to true if no saved credentials
+  const [needsAuth, setNeedsAuth] = useState(!localStorage.getItem('threatdock_credentials') && !localStorage.getItem('threatdock_token'));
+
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  // Fetch SSO Config
-  useEffect(() => {
-    fetch(`${API_BASE}/auth/config`)
-      .then(res => res.json())
-      .then(data => setSsoConfig(data))
-      .catch(console.error);
-  }, []);
-
-  useEffect(() => {
+  // Fetch alerts
+  const fetchAlerts = useCallback(() => {
     const params = [];
     if (severityFilter) params.push(`severity=${encodeURIComponent(severityFilter)}`);
     if (sourceFilter) params.push(`source=${encodeURIComponent(sourceFilter)}`);
@@ -136,25 +107,18 @@ function AppContent() {
     if (endDate) params.push(`end=${endDate}`);
     const queryString = params.length ? `?${params.join('&')}` : '';
 
-    const headers = {};
-    if (authData?.token) {
-      headers['Authorization'] = `Bearer ${authData.token}`;
-    } else if (authData?.basic) {
-      const basicAuth = btoa(`${authData.basic.user}:${authData.basic.pass}`);
-      headers['Authorization'] = `Basic ${basicAuth}`;
-    }
+    const headers = getAuthHeaders(authData);
 
+    setLoading(true);
     fetch(`${API_BASE}/api/alerts${queryString}`, { headers })
       .then(res => {
         if (res.status === 401) {
           setNeedsAuth(true);
-          if (authData) {
-            setLoginError('Session expired or invalid credentials.');
-            setAuthData(null);
-            localStorage.removeItem('threatdock_token');
-            localStorage.removeItem('threatdock_user');
-            localStorage.removeItem('threatdock_credentials');
-          }
+          setAuthData(null);
+          localStorage.removeItem('threatdock_token');
+          localStorage.removeItem('threatdock_user');
+          localStorage.removeItem('threatdock_credentials');
+          setLoginError('Session expired or invalid credentials.');
           throw new Error('Authentication required');
         }
         setNeedsAuth(false);
@@ -162,21 +126,26 @@ function AppContent() {
         if (!res.ok) throw new Error(`HTTP error ${res.status}`);
         return res.json();
       })
-      .then(data => setAlerts(data))
+      .then(data => {
+        setAlerts(Array.isArray(data) ? data : []);
+        setLoading(false);
+      })
       .catch(err => {
+        setLoading(false);
         if (err.message !== 'Authentication required') {
           console.error('Error fetching alerts:', err);
         }
       });
   }, [severityFilter, sourceFilter, statusFilter, startDate, endDate, authData]);
 
-  const handleStatusChange = (id, newStatus) => {
-    const headers = { 'Content-Type': 'application/json' };
-    if (authData?.token) {
-      headers['Authorization'] = `Bearer ${authData.token}`;
-    } else if (authData?.basic) {
-      headers['Authorization'] = `Basic ${btoa(`${authData.basic.user}:${authData.basic.pass}`)}`;
+  useEffect(() => {
+    if (authData) {
+      fetchAlerts();
     }
+  }, [fetchAlerts, authData]);
+
+  const handleStatusChange = (id, newStatus) => {
+    const headers = { 'Content-Type': 'application/json', ...getAuthHeaders(authData) };
 
     fetch(`${API_BASE}/api/alerts/${id}`, {
       method: 'PATCH',
@@ -190,61 +159,106 @@ function AppContent() {
       .catch(console.error);
   };
 
-  const handleLegacyLogin = (e) => {
+  const handleLogin = (e) => {
     e.preventDefault();
-    const basic = { user: loginUser, pass: loginPass };
-    localStorage.setItem('threatdock_credentials', JSON.stringify(basic));
-    setAuthData({ basic, user: { name: loginUser } });
-  };
+    setLoginError('');
 
-  const handleSSOLogin = () => {
-    window.location.href = `${API_BASE}/auth/login`;
+    // Validate credentials against the backend before saving
+    const basicAuth = btoa(`${loginUser}:${loginPass}`);
+    fetch(`${API_BASE}/api/alerts?limit=1`, {
+      headers: { 'Authorization': `Basic ${basicAuth}` }
+    })
+      .then(res => {
+        if (res.status === 401) {
+          setLoginError('Invalid username or password.');
+          throw new Error('Invalid credentials');
+        }
+        return res.json();
+      })
+      .then(() => {
+        const basic = { user: loginUser, pass: loginPass };
+        localStorage.setItem('threatdock_credentials', JSON.stringify(basic));
+        setAuthData({ basic, user: { name: loginUser } });
+        setNeedsAuth(false);
+        setLoginError('');
+      })
+      .catch(err => {
+        if (err.message !== 'Invalid credentials') {
+          setLoginError('Network error. Please try again.');
+        }
+      });
   };
 
   const handleLogout = () => {
-    localStorage.clear();
+    localStorage.removeItem('threatdock_token');
+    localStorage.removeItem('threatdock_user');
+    localStorage.removeItem('threatdock_credentials');
     setAuthData(null);
+    setAlerts([]);
     setNeedsAuth(true);
   };
 
-  // Auth Routing Bypass for callback
-  if (window.location.pathname === '/callback') {
-    return <OAuthCallback setAuthData={setAuthData} />;
-  }
-
-  if (needsAuth && !authData) {
+  // Show login screen
+  if (needsAuth || !authData) {
     return (
       <div className="login-page">
         <div className="login-card card">
           <div className="login-brand">
-            <h1 className="brand-title" style={{ fontSize: '2.5rem' }}>ThreatDock</h1>
-            <p className="page-subtitle">Enterprise Threat Intelligence</p>
+            <div className="login-logo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '48px', height: '48px', color: 'var(--primary-color)' }}>
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </div>
+            <h1 className="brand-title" style={{ fontSize: '2rem', marginTop: '1rem' }}>ThreatDock</h1>
+            <p className="page-subtitle" style={{ marginTop: '0.5rem' }}>Enterprise Threat Intelligence Platform</p>
           </div>
           
-          {loginError && <div className="card text-red" style={{ padding: '0.75rem', marginBottom: '1.5rem', background: 'rgba(239,68,68,0.1)' }}>{loginError}</div>}
-          
-          {/* SSO button hidden per user request
-          {ssoConfig?.ssoEnabled ? (
-            <div className="flex flex-col gap-4">
-              <button onClick={handleSSOLogin} className="btn btn-primary btn-block" style={{ padding: '0.875rem', fontSize: '1rem' }}>
-                Sign In with SSO (Authentik)
-              </button>
-              <div style={{ margin: '1rem 0', color: 'var(--text-muted)' }}>— OR —</div>
+          {loginError && (
+            <div style={{ 
+              padding: '0.75rem 1rem', 
+              marginBottom: '1.5rem', 
+              background: 'rgba(239,68,68,0.15)', 
+              border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: '8px',
+              color: '#f87171',
+              fontSize: '0.875rem'
+            }}>
+              {loginError}
             </div>
-          ) : null}
-          */}
+          )}
 
-          <form onSubmit={handleLegacyLogin} className="flex flex-col gap-4 text-left">
+          <form onSubmit={handleLogin} className="flex flex-col gap-4 text-left">
             <div className="form-group">
               <label className="form-label">Username</label>
-              <input className="form-input" type="text" value={loginUser} onChange={e => setLoginUser(e.target.value)} required />
+              <input 
+                className="form-input" 
+                type="text" 
+                value={loginUser} 
+                onChange={e => setLoginUser(e.target.value)} 
+                placeholder="Enter your username"
+                autoFocus
+                required 
+              />
             </div>
             <div className="form-group">
               <label className="form-label">Password</label>
-              <input className="form-input" type="password" value={loginPass} onChange={e => setLoginPass(e.target.value)} required />
+              <input 
+                className="form-input" 
+                type="password" 
+                value={loginPass} 
+                onChange={e => setLoginPass(e.target.value)} 
+                placeholder="Enter your password"
+                required 
+              />
             </div>
-            <button type="submit" className="btn btn-outline btn-block">Sign In with Local Account</button>
+            <button type="submit" className="btn btn-primary btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
+              Sign In
+            </button>
           </form>
+          
+          <p style={{ marginTop: '1.5rem', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+            Protected by ThreatDock Security
+          </p>
         </div>
       </div>
     );
@@ -268,16 +282,16 @@ function AppContent() {
       <Routes>
         <Route path="/" element={<Dashboard alerts={filteredAlerts} />} />
         <Route path="/alerts" element={<AlertsPage alerts={filteredAlerts} filters={filtersProps} handlers={{ handleStatusChange }} />} />
-        <Route path="/hunting" element={<ThreatHunting />} />
-        <Route path="/assets" element={<AssetDiscovery />} />
-        <Route path="/exposure" element={<ExposureMonitoring />} />
-        <Route path="/intel" element={<AssetIntelligence />} />
-        <Route path="/prioritization" element={<VulnPrioritization />} />
-        <Route path="/predictive" element={<PredictiveIntel />} />
-        <Route path="/analysis" element={<ThreatAnalysis />} />
-        <Route path="/digital-risk" element={<DigitalRisk />} />
-        <Route path="/brand" element={<BrandExposure />} />
-        <Route path="/third-party" element={<ThirdPartyRisk />} />
+        <Route path="/hunting" element={<ThreatHunting authData={authData} />} />
+        <Route path="/assets" element={<AssetDiscovery authData={authData} />} />
+        <Route path="/exposure" element={<ExposureMonitoring alerts={filteredAlerts} />} />
+        <Route path="/intel" element={<AssetIntelligence alerts={filteredAlerts} />} />
+        <Route path="/prioritization" element={<VulnPrioritization alerts={filteredAlerts} />} />
+        <Route path="/predictive" element={<PredictiveIntel alerts={filteredAlerts} />} />
+        <Route path="/analysis" element={<ThreatAnalysis alerts={filteredAlerts} />} />
+        <Route path="/digital-risk" element={<DigitalRisk alerts={filteredAlerts} />} />
+        <Route path="/brand" element={<BrandExposure alerts={filteredAlerts} />} />
+        <Route path="/third-party" element={<ThirdPartyRisk authData={authData} />} />
         <Route path="/settings" element={<Settings authData={authData} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
