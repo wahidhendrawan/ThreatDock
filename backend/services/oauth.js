@@ -47,11 +47,30 @@ function validateToken(token, settings) {
   });
 }
 
+async function discoverEndpoints(issuerUrl) {
+  try {
+    const discoveryUrl = issuerUrl.endsWith('/') ? 
+      `${issuerUrl}.well-known/openid-configuration` : 
+      `${issuerUrl}/.well-known/openid-configuration`;
+    const response = await axios.get(discoveryUrl, { timeout: 3000 });
+    return response.data;
+  } catch (err) {
+    console.error('OIDC discovery failed:', err.message);
+    return null;
+  }
+}
+
 /**
  * Exchange Authorization Code for Access Token
  */
 async function exchangeCodeForToken(code, redirectUri, settings) {
-  const tokenUrl = `${settings.OIDC_ISSUER_URL}token/`;
+  let tokenUrl = settings.OIDC_ISSUER_URL.endsWith('/') ? `${settings.OIDC_ISSUER_URL}token/` : `${settings.OIDC_ISSUER_URL}/token/`;
+  
+  const config = await discoverEndpoints(settings.OIDC_ISSUER_URL);
+  if (config && config.token_endpoint) {
+    tokenUrl = config.token_endpoint;
+  }
+
   const params = new URLSearchParams();
   params.append('grant_type', 'authorization_code');
   params.append('code', code);
@@ -78,7 +97,13 @@ async function exchangeCodeForToken(code, redirectUri, settings) {
  * Fetch User Info using Access Token
  */
 async function getUserInfo(accessToken, settings) {
-  const userInfoUrl = `${settings.OIDC_ISSUER_URL}userinfo/`;
+  let userInfoUrl = settings.OIDC_ISSUER_URL.endsWith('/') ? `${settings.OIDC_ISSUER_URL}userinfo/` : `${settings.OIDC_ISSUER_URL}/userinfo/`;
+  
+  const config = await discoverEndpoints(settings.OIDC_ISSUER_URL);
+  if (config && config.userinfo_endpoint) {
+    userInfoUrl = config.userinfo_endpoint;
+  }
+
   try {
     const response = await axios.get(userInfoUrl, {
       headers: { 'Authorization': `Bearer ${accessToken}` },
