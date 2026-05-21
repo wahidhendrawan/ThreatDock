@@ -13,7 +13,7 @@ async function fetchGitHubAdvisories() {
     headers['Authorization'] = `Bearer ${token}`;
   }
   try {
-    const response = await axios.get(url, { headers });
+    const response = await axios.get(url, { headers, timeout: 10000 });
     // The API returns an array of advisories
     return response.data || [];
   } catch (error) {

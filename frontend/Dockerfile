@@ -6,10 +6,9 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-# Stage 2: serve the static files
-FROM node:25.6.0-alpine
-WORKDIR /app
-RUN npm install -g serve
-COPY --from=build /app/build ./build
+# Stage 2: serve the static files with Nginx
+FROM nginx:alpine
+COPY --from=build /app/build /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
-CMD ["serve", "-s", "build", "-l", "80"]
+CMD ["nginx", "-g", "daemon off;"]

@@ -24,32 +24,118 @@ const PORT = process.env.PORT || 5002;
 app.use(cors());
 app.use(express.json());
 
-// Apply HTTP Basic authentication middleware.  If environment variables
-// AUTH_USER and AUTH_PASSWORD are not set, authMiddleware will
-// simply pass requests through.  Otherwise all requests will
-// require valid credentials in the Authorization header.
-app.use(authMiddleware);
-
 // Initialize SQLite database
 const dbPath = process.env.DB_PATH || 'alerts.db';
 const db = new sqlite3.Database(dbPath);
-// Create alerts table if it does not exist
-db.run(`CREATE TABLE IF NOT EXISTS alerts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source TEXT,
-  externalId TEXT,
-  title TEXT,
-  severity TEXT,
-  date TEXT,
-  url TEXT,
-  status TEXT DEFAULT 'Open',
-  attack_phase TEXT DEFAULT 'Unknown'
-)`);
+const bcrypt = require('bcryptjs');
 
-// Attempt to add status and attack_phase columns if they are missing.  SQLite
-// will throw an error if the column already exists; we suppress the error.
-db.run("ALTER TABLE alerts ADD COLUMN status TEXT DEFAULT 'Open'", () => {});
-db.run("ALTER TABLE alerts ADD COLUMN attack_phase TEXT DEFAULT 'Unknown'", () => {});
+app.use((req, res, next) => {
+  req.db = db;
+  next();
+});
+
+// Remove global authMiddleware here
+
+// Create alerts table if it does not exist with UNIQUE constraint for upserts
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT,
+    externalId TEXT,
+    title TEXT,
+    severity TEXT,
+    date TEXT,
+    url TEXT,
+    status TEXT DEFAULT 'Open',
+    attack_phase TEXT DEFAULT 'Unknown',
+    UNIQUE(source, externalId)
+  )`);
+
+  // Assets table for External Asset Discovery
+  db.run(`CREATE TABLE IF NOT EXISTS assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT,
+    ip TEXT,
+    port INTEGER,
+    service TEXT,
+    tech_stack TEXT,
+    status TEXT DEFAULT 'Active',
+    risk_score INTEGER DEFAULT 0,
+    last_seen TEXT,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(domain, ip, port)
+  )`);
+
+  // Hunt queries log for Threat Hunting
+  db.run(`CREATE TABLE IF NOT EXISTS hunt_queries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query_type TEXT,
+    query_value TEXT,
+    results TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    user TEXT
+  )`);
+
+  // Vendors table for Third-Party Risk
+  db.run(`CREATE TABLE IF NOT EXISTS vendors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE,
+    category TEXT,
+    risk_score INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'Active',
+    contact TEXT,
+    last_assessment TEXT,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
+  // Settings table for dynamic configuration
+  db.run(`CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+
+  // Users table for local auth and role management
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
+    password_hash TEXT,
+    email TEXT,
+    role TEXT DEFAULT 'Analyst',
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+});
+
+// Seed default settings and user if they don't exist
+db.serialize(() => {
+  db.get("SELECT COUNT(*) AS count FROM settings", (err, row) => {
+    if (!err && row.count === 0) {
+      const defaultSettings = [
+        ['OIDC_ISSUER_URL', process.env.OIDC_ISSUER_URL || ''],
+        ['OIDC_CLIENT_ID', process.env.OIDC_CLIENT_ID || ''],
+        ['OIDC_CLIENT_SECRET', process.env.OIDC_CLIENT_SECRET || ''],
+        ['FRONTEND_URL', process.env.FRONTEND_URL || 'http://localhost:3000'],
+        ['JWT_SECRET', process.env.JWT_SECRET || 'super_secret_threatdock_jwt_key_12345'],
+        ['SSO_ENABLED', process.env.OIDC_ISSUER_URL ? 'true' : 'false']
+      ];
+      const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
+      defaultSettings.forEach(s => stmt.run(s[0], s[1]));
+      stmt.finalize();
+    }
+  });
+
+  db.get("SELECT COUNT(*) AS count FROM users", (err, row) => {
+    if (!err && row.count === 0) {
+      // Create default admin user from .env if available
+      const adminUser = process.env.AUTH_USER || 'admin';
+      const adminPass = process.env.AUTH_PASSWORD || 'admin';
+      const hash = bcrypt.hashSync(adminPass, 10);
+      db.run("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'Admin')", [adminUser, hash]);
+    }
+  });
+});
 
 // Utility: map Red Hat severities to standardized values
 function mapRedHatSeverity(sev) {
@@ -250,10 +336,19 @@ async function fetchAllSources() {
       }
     }
 
-    // Persist alerts to DB
+    // Persist alerts to DB using upsert to avoid overwriting user updates (status, attack_phase)
     db.serialize(() => {
-      db.run('DELETE FROM alerts');
-      const stmt = db.prepare('INSERT INTO alerts (source, externalId, title, severity, date, url, status, attack_phase) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      db.run("BEGIN TRANSACTION");
+      const stmt = db.prepare(`
+        INSERT INTO alerts (source, externalId, title, severity, date, url, status, attack_phase)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source, externalId) DO UPDATE SET
+          title = excluded.title,
+          severity = excluded.severity,
+          date = excluded.date,
+          url = excluded.url,
+          attack_phase = CASE WHEN excluded.attack_phase != 'Unknown' THEN excluded.attack_phase ELSE alerts.attack_phase END
+      `);
       for (const alert of alerts) {
         stmt.run(
           alert.source,
@@ -267,6 +362,7 @@ async function fetchAllSources() {
         );
       }
       stmt.finalize();
+      db.run("COMMIT");
     });
 
     console.log(`Fetched and stored ${alerts.length} alerts.`);
@@ -274,6 +370,7 @@ async function fetchAllSources() {
     // Send notifications after storing alerts
     try {
       await notificationService.sendSlackNotifications(alerts);
+      await notificationService.sendN8nWebhook(alerts);
     } catch (notifyErr) {
       console.error('Error sending notifications:', notifyErr.message);
     }
@@ -289,7 +386,27 @@ cron.schedule('0 * * * *', fetchAllSources);
 
 // Mount alerts router
 const alertsRouter = require('./routes/alerts')(db);
-app.use('/alerts', alertsRouter);
+app.use('/api/alerts', authMiddleware, alertsRouter);
+
+// Mount Auth router (Unprotected)
+const authRouter = require('./routes/auth');
+app.use('/auth', authRouter);
+
+// Mount API routers
+const assetsRouter = require('./routes/assets')(db);
+app.use('/api/assets', authMiddleware, assetsRouter);
+
+const vendorsRouter = require('./routes/vendors')(db);
+app.use('/api/vendors', authMiddleware, vendorsRouter);
+
+const huntRouter = require('./routes/threatHunting')(db);
+app.use('/api/hunt', authMiddleware, huntRouter);
+
+const usersRouter = require('./routes/users')(db);
+app.use('/api/users', authMiddleware, usersRouter);
+
+const settingsRouter = require('./routes/settings')(db);
+app.use('/api/settings', authMiddleware, settingsRouter);
 
 // Health endpoint
 app.get('/', (req, res) => {
