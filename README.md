@@ -12,13 +12,16 @@ ThreatDock is a professional-grade security alert aggregator and threat intellig
 - **Extensible Backend**: Modular service-based architecture (Node.js/Express) for easy integration of new TI sources.
 - **Automated Notifications**: Slack integration with customizable severity thresholds.
 - **SOC-Ready**: Supports alert status management (Open/In Progress/Closed) and manual enrichment.
+- **SSO Integration**: Out-of-the-box support for Authentik OAuth2 Single Sign-On.
+- **Dynamic Configuration**: Manage users and application settings directly from the web interface, backed by a persistent SQLite database.
+- **Enterprise Architecture**: Built-in Nginx Reverse Proxy handles API routing (`/api` and `/auth`) transparently without cross-origin issues or SSL mixed-content errors.
 
 ---
 
 ## 🛠️ Tech Stack
-- **Frontend**: React.js, Lucide Icons, Tailwind CSS (Visual Design).
+- **Frontend**: React.js, Lucide Icons, Vanilla CSS (Premium Dark/Light Themes), Nginx Reverse Proxy.
 - **Backend**: Node.js, Express.js.
-- **Storage**: SQLite (Lightweight & Portable).
+- **Storage**: SQLite (Lightweight, Portable, Persistent).
 - **Deployment**: Docker, Docker Compose.
 
 ---
@@ -27,7 +30,6 @@ ThreatDock is a professional-grade security alert aggregator and threat intellig
 
 ### 1. Prerequisites
 - Docker & Docker Compose installed.
-- API Keys for various services (GitHub, OTX, etc. — Optional but recommended).
 
 ### 2. Configuration
 Clone the repository and prepare your environment variables:
@@ -36,17 +38,18 @@ git clone https://github.com/wahidhendrawan/ThreatDock.git
 cd ThreatDock/backend
 cp .env.example .env
 ```
-Edit `.env` and add your API keys to enable full intelligence enrichment.
+Edit `.env` and add your API keys to enable full intelligence enrichment. The default local administrator will be seeded using `AUTH_USER` and `AUTH_PASSWORD`.
 
 ### 3. Deployment
 Run the entire stack using Docker:
 ```bash
-docker-compose up --build
+docker-compose build --no-cache
+docker-compose up -d
 ```
 
 ### 4. Access
-- **Dashboard**: `http://localhost:3000`
-- **API Backend**: `http://localhost:5000`
+- **Unified Dashboard & API**: `http://localhost:3000` (Routed by Nginx)
+- The frontend proxy will automatically route `/api/*` and `/auth/*` requests internally to the backend.
 
 ---
 
