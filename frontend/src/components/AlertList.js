@@ -1,6 +1,16 @@
 import React from 'react';
 
 function AlertList({ alerts, onStatusChange }) {
+  const formatDate = (dateStr) => {
+    if (!dateStr) return 'N/A';
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
   if (!alerts || alerts.length === 0) {
     return (
       <div className="card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
@@ -23,18 +33,28 @@ function AlertList({ alerts, onStatusChange }) {
           </tr>
         </thead>
         <tbody>
-          {alerts.map(alert => (
+          {alerts.slice(0, 50).map(alert => (
             <tr key={alert.id || `${alert.source}-${alert.externalId}`}>
-              <td>{alert.source}</td>
+              <td style={{ fontWeight: '600', color: 'var(--primary-color)' }}>{alert.source}</td>
               <td>
                 <span className={`severity-badge severity-${alert.severity || 'Unknown'}`}>
                   {alert.severity || 'Unknown'}
                 </span>
               </td>
               <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
-                {alert.date ? new Date(alert.date).toLocaleDateString() : 'N/A'}
+                {formatDate(alert.date)}
               </td>
-              <td>{alert.attack_phase || 'Unknown'}</td>
+              <td>
+                <span style={{ 
+                  background: 'rgba(255,255,255,0.03)', 
+                  padding: '0.25rem 0.5rem', 
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.8rem',
+                  border: '1px solid var(--border-color)' 
+                }}>
+                  {alert.attack_phase || 'Unknown'}
+                </span>
+              </td>
               <td>
                 <select
                   className="status-select"

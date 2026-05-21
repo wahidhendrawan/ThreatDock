@@ -42,7 +42,8 @@ async function fetchMispEvents() {
         Authorization: apiKey,
         Accept: 'application/json',
         'Content-Type': 'application/json'
-      }
+      },
+      timeout: 10000
     });
     const events = Array.isArray(res.data) ? res.data : res.data.response || [];
     const results = [];

@@ -10,7 +10,7 @@ async function fetchRedHatCves() {
   const afterDate = weekAgo.toISOString().split('T')[0]; // YYYY-MM-DD
   const url = `https://access.redhat.com/hydra/rest/securitydata/cve.json?after=${afterDate}`;
   try {
-    const response = await axios.get(url);
+    const response = await axios.get(url, { timeout: 10000 });
     return response.data || [];
   } catch (error) {
     console.error('Red Hat CVEs fetch failed:', error.message);

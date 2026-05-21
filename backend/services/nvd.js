@@ -22,7 +22,7 @@ async function fetchNvdCves() {
     headers['apiKey'] = apiKey;
   }
   try {
-    const response = await axios.get(url, { headers });
+    const response = await axios.get(url, { headers, timeout: 10000 });
     return response.data || { vulnerabilities: [] };
   } catch (error) {
     console.error('NVD CVE fetch failed:', error.message);

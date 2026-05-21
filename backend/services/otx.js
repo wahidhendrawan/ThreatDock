@@ -17,7 +17,7 @@ async function fetchOtxPulses() {
     'User-Agent': 'ThreatDock'
   };
   try {
-    const response = await axios.get(url, { headers, params: { page: 1 } });
+    const response = await axios.get(url, { headers, params: { page: 1 }, timeout: 10000 });
     // Response is expected to be an object with 'results' or a list
     const data = response.data;
     if (Array.isArray(data)) {

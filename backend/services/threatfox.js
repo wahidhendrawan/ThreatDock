@@ -21,7 +21,7 @@ async function fetchThreatFoxIocs() {
     'User-Agent': 'ThreatDock'
   };
   try {
-    const response = await axios.post(url, payload, { headers });
+    const response = await axios.post(url, payload, { headers, timeout: 10000 });
     const data = response.data || {};
     if (data && Array.isArray(data.data)) {
       return data.data;
