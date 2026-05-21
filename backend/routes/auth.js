@@ -1,4 +1,7 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { authenticator } = require('otplib');
 const { exchangeCodeForToken, getUserInfo } = require('../services/oauth');
 
 const router = express.Router();
@@ -15,12 +18,33 @@ const getSettings = (db) => {
   });
 };
 
-// GET /auth/login - Redirects to Authentik authorization endpoint
+// GET /auth/login - Redirects to authorization endpoint via Discovery
 router.get('/login', async (req, res) => {
   try {
     const settings = await getSettings(req.db);
     const redirectUri = `${settings.FRONTEND_URL}/callback`;
-    const authorizeUrl = new URL(`${settings.OIDC_ISSUER_URL}authorize/`);
+    
+    // Default to a constructed URL
+    let authorizeEndpoint = settings.OIDC_ISSUER_URL.endsWith('/') ? 
+      `${settings.OIDC_ISSUER_URL}authorize/` : 
+      `${settings.OIDC_ISSUER_URL}/authorize/`;
+
+    // Try to discover via well-known configuration
+    try {
+      const axios = require('axios');
+      const discoveryUrl = settings.OIDC_ISSUER_URL.endsWith('/') ? 
+        `${settings.OIDC_ISSUER_URL}.well-known/openid-configuration` : 
+        `${settings.OIDC_ISSUER_URL}/.well-known/openid-configuration`;
+        
+      const response = await axios.get(discoveryUrl, { timeout: 3000 });
+      if (response.data && response.data.authorization_endpoint) {
+        authorizeEndpoint = response.data.authorization_endpoint;
+      }
+    } catch (discoveryError) {
+      console.error('OIDC Discovery failed, using fallback authorize endpoint', discoveryError.message);
+    }
+
+    const authorizeUrl = new URL(authorizeEndpoint);
     authorizeUrl.searchParams.append('client_id', settings.OIDC_CLIENT_ID);
     authorizeUrl.searchParams.append('response_type', 'code');
     authorizeUrl.searchParams.append('redirect_uri', redirectUri);
@@ -28,6 +52,7 @@ router.get('/login', async (req, res) => {
     
     res.redirect(authorizeUrl.toString());
   } catch (err) {
+    console.error(err);
     res.status(500).send('Internal Server Error');
   }
 });
@@ -70,6 +95,78 @@ router.get('/config', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load configuration' });
+  }
+});
+
+// POST /auth/local-login
+router.post('/local-login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const settings = await getSettings(req.db);
+    req.db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
+      if (err || !user) return res.status(401).json({ error: 'Invalid credentials' });
+      
+      if (!bcrypt.compareSync(password, user.password_hash)) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      const globalMfaRequired = settings.MFA_REQUIRED === 'true';
+      
+      if (user.mfa_enabled || globalMfaRequired) {
+        // Return temp token for MFA verification step
+        const tempToken = jwt.sign({ id: user.id, mfaPending: true }, settings.JWT_SECRET, { expiresIn: '5m' });
+        return res.json({ 
+          requiresMfa: true, 
+          tempToken, 
+          setupRequired: !user.mfa_enabled // User hasn't configured MFA yet but it's globally required
+        });
+      }
+
+      // No MFA required, generate full token
+      const token = jwt.sign(
+        { id: user.id, name: user.username, email: user.email, role: user.role, type: 'local' }, 
+        settings.JWT_SECRET, 
+        { expiresIn: '8h' }
+      );
+      res.json({ access_token: token, user: { name: user.username, role: user.role } });
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// POST /auth/verify-mfa
+router.post('/verify-mfa', async (req, res) => {
+  const { tempToken, code } = req.body;
+  if (!tempToken || !code) return res.status(400).json({ error: 'Missing token or code' });
+
+  try {
+    const settings = await getSettings(req.db);
+    const decoded = jwt.verify(tempToken, settings.JWT_SECRET);
+    if (!decoded.mfaPending) return res.status(400).json({ error: 'Invalid token' });
+
+    req.db.get('SELECT * FROM users WHERE id = ?', [decoded.id], (err, user) => {
+      if (err || !user) return res.status(401).json({ error: 'User not found' });
+      
+      if (!user.mfa_secret) return res.status(400).json({ error: 'MFA not configured for this user' });
+
+      const isValid = authenticator.verify({ token: code, secret: user.mfa_secret });
+      if (!isValid) return res.status(401).json({ error: 'Invalid MFA code' });
+
+      // Ensure MFA is marked enabled since they just successfully logged in
+      if (!user.mfa_enabled) {
+        req.db.run('UPDATE users SET mfa_enabled = 1 WHERE id = ?', [user.id]);
+      }
+
+      const token = jwt.sign(
+        { id: user.id, name: user.username, email: user.email, role: user.role, type: 'local' }, 
+        settings.JWT_SECRET, 
+        { expiresIn: '8h' }
+      );
+      res.json({ access_token: token, user: { name: user.username, role: user.role } });
+    });
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
   }
 });
 

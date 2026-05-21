@@ -71,7 +71,7 @@ function AppContent() {
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // Authentication State — start with checking localStorage
+  // Authentication State
   const [authData, setAuthData] = useState(() => {
     try {
       const token = localStorage.getItem('threatdock_token');
@@ -79,23 +79,34 @@ function AppContent() {
       if (token && userStr) {
         return { token, user: JSON.parse(userStr) };
       }
-      const savedBasic = localStorage.getItem('threatdock_credentials');
-      if (savedBasic) {
-        const basic = JSON.parse(savedBasic);
-        return { basic, user: { name: basic.user } };
-      }
       return null;
     } catch {
       return null;
     }
   });
 
-  // needsAuth defaults to true if no saved credentials
-  const [needsAuth, setNeedsAuth] = useState(!localStorage.getItem('threatdock_credentials') && !localStorage.getItem('threatdock_token'));
-
+  const [needsAuth, setNeedsAuth] = useState(!localStorage.getItem('threatdock_token'));
+  
+  // Login State
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
+  
+  // MFA State
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [tempToken, setTempToken] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaSetupRequired, setMfaSetupRequired] = useState(false);
+
+  // SSO State
+  const [ssoConfig, setSsoConfig] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/auth/config`)
+      .then(res => res.json())
+      .then(data => setSsoConfig(data))
+      .catch(console.error);
+  }, []);
 
   // Fetch alerts
   const fetchAlerts = useCallback(() => {
@@ -163,39 +174,71 @@ function AppContent() {
     e.preventDefault();
     setLoginError('');
 
-    // Validate credentials against the backend before saving
-    const basicAuth = btoa(`${loginUser}:${loginPass}`);
-    fetch(`${API_BASE}/api/alerts?limit=1`, {
-      headers: { 'Authorization': `Basic ${basicAuth}` }
+    fetch(`${API_BASE}/auth/local-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: loginUser, password: loginPass })
     })
-      .then(res => {
-        if (res.status === 401) {
+      .then(res => res.json().then(data => ({ status: res.status, data })))
+      .then(({ status, data }) => {
+        if (status === 401) {
           setLoginError('Invalid username or password.');
-          throw new Error('Invalid credentials');
+          return;
         }
-        return res.json();
+        if (status !== 200) {
+          setLoginError(data.error || 'Login failed.');
+          return;
+        }
+
+        if (data.requiresMfa) {
+          setMfaRequired(true);
+          setTempToken(data.tempToken);
+          setMfaSetupRequired(data.setupRequired);
+        } else {
+          localStorage.setItem('threatdock_token', data.access_token);
+          localStorage.setItem('threatdock_user', JSON.stringify(data.user));
+          setAuthData({ token: data.access_token, user: data.user });
+          setNeedsAuth(false);
+        }
       })
-      .then(() => {
-        const basic = { user: loginUser, pass: loginPass };
-        localStorage.setItem('threatdock_credentials', JSON.stringify(basic));
-        setAuthData({ basic, user: { name: loginUser } });
+      .catch(() => setLoginError('Network error. Please try again.'));
+  };
+
+  const handleVerifyMfa = (e) => {
+    e.preventDefault();
+    setLoginError('');
+
+    fetch(`${API_BASE}/auth/verify-mfa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tempToken, code: mfaCode })
+    })
+      .then(res => res.json().then(data => ({ status: res.status, data })))
+      .then(({ status, data }) => {
+        if (status !== 200) {
+          setLoginError(data.error || 'Invalid MFA code.');
+          return;
+        }
+        localStorage.setItem('threatdock_token', data.access_token);
+        localStorage.setItem('threatdock_user', JSON.stringify(data.user));
+        setAuthData({ token: data.access_token, user: data.user });
         setNeedsAuth(false);
-        setLoginError('');
+        setMfaRequired(false);
+        setTempToken('');
       })
-      .catch(err => {
-        if (err.message !== 'Invalid credentials') {
-          setLoginError('Network error. Please try again.');
-        }
-      });
+      .catch(() => setLoginError('Network error. Please try again.'));
   };
 
   const handleLogout = () => {
     localStorage.removeItem('threatdock_token');
     localStorage.removeItem('threatdock_user');
-    localStorage.removeItem('threatdock_credentials');
     setAuthData(null);
     setAlerts([]);
     setNeedsAuth(true);
+    setMfaRequired(false);
+    setLoginUser('');
+    setLoginPass('');
+    setMfaCode('');
   };
 
   // Show login screen
@@ -209,7 +252,7 @@ function AppContent() {
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
             </div>
-            <h1 className="brand-title" style={{ fontSize: '2rem', marginTop: '1rem' }}>ThreatDock</h1>
+            <h1 className="brand-title" style={{ fontSize: '2rem', marginTop: '1rem', color: 'var(--text-main)' }}>ThreatDock</h1>
             <p className="page-subtitle" style={{ marginTop: '0.5rem' }}>Enterprise Threat Intelligence Platform</p>
           </div>
           
@@ -220,41 +263,90 @@ function AppContent() {
               background: 'rgba(239,68,68,0.15)', 
               border: '1px solid rgba(239,68,68,0.3)',
               borderRadius: '8px',
-              color: '#f87171',
+              color: '#ef4444',
               fontSize: '0.875rem'
             }}>
               {loginError}
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="flex flex-col gap-4 text-left">
-            <div className="form-group">
-              <label className="form-label">Username</label>
-              <input 
-                className="form-input" 
-                type="text" 
-                value={loginUser} 
-                onChange={e => setLoginUser(e.target.value)} 
-                placeholder="Enter your username"
-                autoFocus
-                required 
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Password</label>
-              <input 
-                className="form-input" 
-                type="password" 
-                value={loginPass} 
-                onChange={e => setLoginPass(e.target.value)} 
-                placeholder="Enter your password"
-                required 
-              />
-            </div>
-            <button type="submit" className="btn btn-primary btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
-              Sign In
-            </button>
-          </form>
+          {!mfaRequired ? (
+            <form onSubmit={handleLogin} className="flex flex-col gap-4 text-left">
+              <div className="form-group">
+                <label className="form-label">Username</label>
+                <input 
+                  className="form-input" 
+                  type="text" 
+                  value={loginUser} 
+                  onChange={e => setLoginUser(e.target.value)} 
+                  placeholder="Enter your username"
+                  autoFocus
+                  required 
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Password</label>
+                <input 
+                  className="form-input" 
+                  type="password" 
+                  value={loginPass} 
+                  onChange={e => setLoginPass(e.target.value)} 
+                  placeholder="Enter your password"
+                  required 
+                />
+              </div>
+              <button type="submit" className="btn btn-primary btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
+                Sign In
+              </button>
+              
+              {ssoConfig?.ssoEnabled && (
+                <div style={{ marginTop: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', margin: '1rem 0' }}>
+                    <div style={{ flex: 1, height: '1px', background: 'var(--border-color)' }}></div>
+                    <span style={{ padding: '0 1rem', color: 'var(--text-muted)', fontSize: '0.75rem' }}>OR</span>
+                    <div style={{ flex: 1, height: '1px', background: 'var(--border-color)' }}></div>
+                  </div>
+                  <a href={`${API_BASE}/auth/login`} className="btn btn-outline btn-block" style={{ textDecoration: 'none', padding: '0.875rem', fontSize: '1rem', display: 'flex', justifyContent: 'center' }}>
+                    Login with Corporate SSO
+                  </a>
+                </div>
+              )}
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyMfa} className="flex flex-col gap-4 text-left">
+              <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+                <h3 style={{ color: 'var(--text-main)', marginBottom: '0.5rem' }}>Two-Factor Authentication</h3>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+                  {mfaSetupRequired ? 'MFA is required but not configured. Please contact Administrator to set up your device.' : 'Enter the 6-digit code from your authenticator app.'}
+                </p>
+              </div>
+              
+              {!mfaSetupRequired && (
+                <>
+                  <div className="form-group">
+                    <input 
+                      className="form-input" 
+                      type="text" 
+                      value={mfaCode} 
+                      onChange={e => setMfaCode(e.target.value)} 
+                      placeholder="000000"
+                      maxLength={6}
+                      style={{ textAlign: 'center', fontSize: '1.5rem', letterSpacing: '0.5rem' }}
+                      autoFocus
+                      required 
+                    />
+                  </div>
+                  <button type="submit" className="btn btn-primary btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
+                    Verify
+                  </button>
+                </>
+              )}
+              
+              <button type="button" onClick={() => setMfaRequired(false)} className="btn btn-outline btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
+                Back to Login
+              </button>
+            </form>
+          )}
           
           <p style={{ marginTop: '1.5rem', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
             Protected by ThreatDock Security

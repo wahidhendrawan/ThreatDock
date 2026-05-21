@@ -104,6 +104,8 @@ db.serialize(() => {
     password_hash TEXT,
     email TEXT,
     role TEXT DEFAULT 'Analyst',
+    mfa_secret TEXT,
+    mfa_enabled INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 });
@@ -118,7 +120,8 @@ db.serialize(() => {
         ['OIDC_CLIENT_SECRET', process.env.OIDC_CLIENT_SECRET || ''],
         ['FRONTEND_URL', process.env.FRONTEND_URL || 'http://localhost:3000'],
         ['JWT_SECRET', process.env.JWT_SECRET || 'super_secret_threatdock_jwt_key_12345'],
-        ['SSO_ENABLED', process.env.OIDC_ISSUER_URL ? 'true' : 'false']
+        ['SSO_ENABLED', process.env.OIDC_ISSUER_URL ? 'true' : 'false'],
+        ['MFA_REQUIRED', 'true']
       ];
       const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
       defaultSettings.forEach(s => stmt.run(s[0], s[1]));

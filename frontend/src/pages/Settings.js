@@ -11,6 +11,10 @@ export default function Settings({ authData }) {
 
   // Notifications
   const [msg, setMsg] = useState({ text: '', type: '' });
+  
+  // MFA Setup
+  const [mfaSetupData, setMfaSetupData] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
 
   const headers = { 
     'Content-Type': 'application/json',
@@ -104,6 +108,44 @@ export default function Settings({ authData }) {
     }
   };
 
+  const handleSetupMfa = async (userId) => {
+    try {
+      const res = await fetch(`${API_BASE}/users/${userId}/mfa/setup`, {
+        method: 'POST',
+        headers
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMfaSetupData({ ...data, userId });
+      } else {
+        const err = await res.json();
+        setMsg({ text: `Failed to start MFA setup: ${err.error}`, type: 'error' });
+      }
+    } catch (e) {
+      setMsg({ text: 'Network error.', type: 'error' });
+    }
+  };
+
+  const handleVerifyMfaSetup = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/users/${mfaSetupData.userId}/mfa/enable`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code: mfaCode })
+      });
+      if (res.ok) {
+        setMsg({ text: 'MFA Enabled Successfully', type: 'success' });
+        setMfaSetupData(null);
+        setMfaCode('');
+      } else {
+        const err = await res.json();
+        setMsg({ text: `Verification failed: ${err.error}`, type: 'error' });
+      }
+    } catch (e) {
+      setMsg({ text: 'Network error.', type: 'error' });
+    }
+  };
+
   if (!settings && !msg.text) return <div className="card">Loading settings...</div>;
 
   return (
@@ -130,7 +172,7 @@ export default function Settings({ authData }) {
           onClick={() => setActiveTab('sso')}
           style={{ border: 'none', background: activeTab === 'sso' ? 'var(--primary)' : 'transparent' }}
         >
-          SSO & OAuth
+          Security & SSO
         </button>
         <button 
           className={`btn ${activeTab === 'users' ? 'btn-primary' : 'btn-outline'}`}
@@ -143,11 +185,23 @@ export default function Settings({ authData }) {
 
       {activeTab === 'sso' && settings && (
         <div className="card">
-          <h2 style={{ marginBottom: '1.5rem' }}>OIDC / SSO Configuration</h2>
+          <h2 style={{ marginBottom: '1.5rem' }}>Global Security Configuration</h2>
           <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
             
             <div className="form-group">
-              <label className="form-label">Enable SSO</label>
+              <label className="form-label">Require 2FA (MFA) Globally for Local Users</label>
+              <select 
+                className="form-select"
+                value={settings.MFA_REQUIRED || 'true'} 
+                onChange={(e) => setSettings({...settings, MFA_REQUIRED: e.target.value})}
+              >
+                <option value="true">Enabled (Mandatory)</option>
+                <option value="false">Disabled (Optional)</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Enable Corporate SSO (OIDC)</label>
               <select 
                 className="form-select"
                 value={settings.SSO_ENABLED} 
@@ -256,9 +310,14 @@ export default function Settings({ authData }) {
                       </span>
                     </td>
                     <td>
-                      <button onClick={() => handleDeleteUser(u.id)} className="btn btn-danger" style={{ padding: '0.25rem 0.5rem' }}>
-                        <Trash2 size={14} />
-                      </button>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button onClick={() => handleSetupMfa(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} title="Setup MFA">
+                          Setup 2FA
+                        </button>
+                        <button onClick={() => handleDeleteUser(u.id)} className="btn btn-danger" style={{ padding: '0.25rem 0.5rem' }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -271,6 +330,37 @@ export default function Settings({ authData }) {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* MFA Setup Modal Overlay */}
+      {mfaSetupData && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="card" style={{ maxWidth: '400px', width: '100%', textAlign: 'center' }}>
+            <h3 style={{ marginBottom: '1rem', color: 'var(--text-main)' }}>Set Up Authenticator App</h3>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+              Scan the QR code below using Google Authenticator, Microsoft Authenticator, or Authy.
+            </p>
+            <div style={{ background: 'white', padding: '1rem', borderRadius: '8px', display: 'inline-block', marginBottom: '1.5rem' }}>
+              <img src={mfaSetupData.qrCodeUrl} alt="MFA QR Code" style={{ width: '200px', height: '200px' }} />
+            </div>
+            <div className="form-group" style={{ marginBottom: '1rem' }}>
+              <label className="form-label" style={{ textAlign: 'left' }}>Enter Verification Code</label>
+              <input 
+                className="form-input" 
+                type="text" 
+                placeholder="000000" 
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+                maxLength={6}
+                style={{ textAlign: 'center', fontSize: '1.25rem', letterSpacing: '0.5rem' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button onClick={() => setMfaSetupData(null)} className="btn btn-outline btn-block">Cancel</button>
+              <button onClick={handleVerifyMfaSetup} className="btn btn-primary btn-block">Verify & Enable</button>
+            </div>
           </div>
         </div>
       )}
