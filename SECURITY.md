@@ -5,7 +5,7 @@ Only the latest version of ThreatDock is currently supported for security update
 
 ## Reporting a Vulnerability
 I take the security of this project seriously. If you find a security vulnerability, please do NOT open a public issue. Instead, please report it via one of the following methods:
-- **Email**: [Insert Your Email Here]
+- **Linkedin**: [https://www.linkedin.com/in/wahid-hendrawan-398385176/]
 - **GitHub**: Submit a private vulnerability report if enabled for this repository.
 
 I will attempt to acknowledge your report within 48 hours and provide a timeline for a fix.
