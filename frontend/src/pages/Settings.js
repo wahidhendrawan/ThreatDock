@@ -5,6 +5,7 @@ export default function Settings({ authData }) {
   const [activeTab, setActiveTab] = useState('sso');
   const [settings, setSettings] = useState(null);
   const [users, setUsers] = useState([]);
+  const [roleEdits, setRoleEdits] = useState({});
   
   // New User Form
   const [newUser, setNewUser] = useState({ username: '', password: '', email: '', role: 'Analyst' });
@@ -89,6 +90,30 @@ export default function Settings({ authData }) {
       }
     } catch (e) {
       setMsg({ text: 'Network error adding user.', type: 'error' });
+    }
+  };
+
+
+  const handleRoleChange = async (id) => {
+    try {
+      const selectedRole = roleEdits[id];
+      if (!selectedRole) return;
+
+      const res = await fetch(`${API_BASE}/users/${id}/role`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ role: selectedRole })
+      });
+
+      if (res.ok) {
+        setMsg({ text: 'User role updated', type: 'success' });
+        fetchUsers();
+      } else {
+        const err = await res.json();
+        setMsg({ text: `Error: ${err.error}`, type: 'error' });
+      }
+    } catch (e) {
+      setMsg({ text: 'Network error updating role.', type: 'error' });
     }
   };
 
@@ -305,14 +330,22 @@ export default function Settings({ authData }) {
                     <td>{u.username}</td>
                     <td>{u.email || '-'}</td>
                     <td>
-                      <span className={`badge ${u.role === 'Admin' ? 'badge-critical' : 'badge-low'}`}>
-                        {u.role}
-                      </span>
+                      <select
+                        className="form-select"
+                        value={roleEdits[u.id] || u.role}
+                        onChange={(e) => setRoleEdits({ ...roleEdits, [u.id]: e.target.value })}
+                      >
+                        <option value="Admin">Admin</option>
+                        <option value="Analyst">Analyst</option>
+                      </select>
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button onClick={() => handleSetupMfa(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} title="Setup MFA">
                           Setup 2FA
+                        </button>
+                        <button onClick={() => handleRoleChange(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }}>
+                          <Edit size={14} />
                         </button>
                         <button onClick={() => handleDeleteUser(u.id)} className="btn btn-danger" style={{ padding: '0.25rem 0.5rem' }}>
                           <Trash2 size={14} />
