@@ -148,8 +148,10 @@ router.post('/local-login', async (req, res) => {
       }
 
       const globalMfaRequired = settings.MFA_REQUIRED === 'true';
-      
-      if (user.mfa_enabled || globalMfaRequired) {
+      const analystMfaRequired = settings.ANALYST_MFA_REQUIRED === 'true' && user.role === 'Analyst';
+      const mustUseMfa = user.mfa_enabled || globalMfaRequired || analystMfaRequired;
+
+      if (mustUseMfa) {
         // Return temp token for MFA verification step
         const tempToken = jwt.sign({ id: user.id, mfaPending: true }, settings.JWT_SECRET, { expiresIn: '5m' });
         return res.json({ 
