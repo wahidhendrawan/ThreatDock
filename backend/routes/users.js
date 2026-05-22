@@ -54,7 +54,7 @@ module.exports = function(db) {
     });
   });
 
-  const { authenticator } = require('otplib');
+  const { generateSecret, generateURI, verify } = require('otplib');
   const qrcode = require('qrcode');
 
   // POST /api/users/:id/mfa/setup
@@ -67,8 +67,8 @@ module.exports = function(db) {
     db.get('SELECT username, email FROM users WHERE id = ?', [req.params.id], async (err, user) => {
       if (err || !user) return res.status(404).json({ error: 'User not found' });
 
-      const secret = authenticator.generateSecret();
-      const otpauth = authenticator.keyuri(user.username, 'ThreatDock', secret);
+      const secret = generateSecret();
+      const otpauth = generateURI({ accountName: user.username, issuer: 'ThreatDock', secret });
       
       try {
         const qrCodeUrl = await qrcode.toDataURL(otpauth);
@@ -94,7 +94,7 @@ module.exports = function(db) {
     db.get('SELECT mfa_secret FROM users WHERE id = ?', [req.params.id], (err, user) => {
       if (err || !user || !user.mfa_secret) return res.status(400).json({ error: 'MFA not configured' });
 
-      const isValid = authenticator.verify({ token: code, secret: user.mfa_secret });
+      const isValid = verify({ token: code, secret: user.mfa_secret });
       if (isValid) {
         db.run('UPDATE users SET mfa_enabled = 1 WHERE id = ?', [req.params.id], (updateErr) => {
           if (updateErr) return res.status(500).json({ error: 'Database error' });

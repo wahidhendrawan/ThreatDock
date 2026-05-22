@@ -121,7 +121,7 @@ db.serialize(() => {
         ['FRONTEND_URL', process.env.FRONTEND_URL || 'http://localhost:3000'],
         ['JWT_SECRET', process.env.JWT_SECRET || 'super_secret_threatdock_jwt_key_12345'],
         ['SSO_ENABLED', process.env.OIDC_ISSUER_URL ? 'true' : 'false'],
-        ['MFA_REQUIRED', 'true']
+        ['MFA_REQUIRED', 'false']
       ];
       const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
       defaultSettings.forEach(s => stmt.run(s[0], s[1]));

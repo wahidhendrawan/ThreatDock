@@ -108,6 +108,37 @@ function AppContent() {
       .catch(console.error);
   }, []);
 
+  // Handle SSO Callback
+  useEffect(() => {
+    if (window.location.pathname === '/callback') {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      if (code) {
+        fetch(`${API_BASE}/auth/callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        })
+        .then(res => res.json())
+        .then(data => {
+          if (data.error) {
+            setLoginError(data.error);
+          } else if (data.access_token) {
+            localStorage.setItem('threatdock_token', data.access_token);
+            localStorage.setItem('threatdock_user', JSON.stringify(data.user));
+            setAuthData({ token: data.access_token, user: data.user });
+            setNeedsAuth(false);
+            window.history.replaceState({}, document.title, "/");
+          }
+        })
+        .catch(err => {
+          setLoginError('Failed to process SSO callback');
+          console.error(err);
+        });
+      }
+    }
+  }, []);
+
   // Fetch alerts
   const fetchAlerts = useCallback(() => {
     const params = [];
