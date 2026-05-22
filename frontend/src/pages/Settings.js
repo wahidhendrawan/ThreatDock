@@ -97,7 +97,6 @@ export default function Settings({ authData }) {
     }
   };
 
-
   const handleSaveUser = async (id) => {
     try {
       const edited = userEdits[id];
@@ -110,7 +109,7 @@ export default function Settings({ authData }) {
       });
 
       if (res.ok) {
-        setMsg({ text: 'User updated', type: 'success' });
+        setMsg({ text: 'User updated successfully', type: 'success' });
         fetchUsers();
       } else {
         const err = await res.json();
@@ -188,8 +187,8 @@ export default function Settings({ authData }) {
 
       {msg.text && (
         <div style={{ padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px', 
-             backgroundColor: msg.type === 'error' ? 'var(--danger)' : 'var(--success)', 
-             color: '#fff', opacity: 0.9 }}>
+                     backgroundColor: msg.type === 'error' ? 'var(--danger)' : 'var(--success)', 
+                     color: '#fff', opacity: 0.9 }}>
           {msg.text}
         </div>
       )}
@@ -343,8 +342,21 @@ export default function Settings({ authData }) {
                 {users.map(u => (
                   <tr key={u.id}>
                     <td>{u.id}</td>
-                    <td><input className="form-input" value={(userEdits[u.id] && userEdits[u.id].username) || ''} onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), username: e.target.value } })} /></td>
-                    <td><input className="form-input" value={(userEdits[u.id] && userEdits[u.id].email) || ''} onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), email: e.target.value } })} placeholder="email@example.com" /></td>
+                    <td>
+                      <input 
+                        className="form-input" 
+                        value={(userEdits[u.id] && userEdits[u.id].username) || ''} 
+                        onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), username: e.target.value } })} 
+                      />
+                    </td>
+                    <td>
+                      <input 
+                        className="form-input" 
+                        value={(userEdits[u.id] && userEdits[u.id].email) || ''} 
+                        onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), email: e.target.value } })} 
+                        placeholder="email@example.com" 
+                      />
+                    </td>
                     <td>
                       <select
                         className="form-select"
