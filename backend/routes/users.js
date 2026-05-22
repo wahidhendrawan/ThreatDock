@@ -14,7 +14,7 @@ module.exports = function(db) {
 
   // GET /api/users
   router.get('/', requireAdmin, (req, res) => {
-    db.all('SELECT id, username, email, role, created_at FROM users', [], (err, rows) => {
+    db.all('SELECT id, username, email, role, mfa_enabled, created_at FROM users', [], (err, rows) => {
       if (err) return res.status(500).json({ error: 'Database error' });
       res.json(rows);
     });
@@ -100,8 +100,18 @@ module.exports = function(db) {
     });
   });
 
-  const { generateSecret, generateURI, verify } = require('otplib');
+  const { generateSecret, generateURI, verifySync } = require('otplib');
   const qrcode = require('qrcode');
+
+  const verifyMfaCode = (code, secret) => {
+    if (!/^\d{6}$/.test(String(code || ''))) return false;
+    const result = verifySync({
+      token: String(code),
+      secret,
+      window: 0
+    });
+    return Boolean(result && result.valid === true);
+  };
 
   // POST /api/users/:id/mfa/setup
   router.post('/:id/mfa/setup', async (req, res) => {
@@ -138,7 +148,7 @@ module.exports = function(db) {
     db.get('SELECT mfa_secret FROM users WHERE id = ?', [req.params.id], (err, user) => {
       if (err || !user || !user.mfa_secret) return res.status(400).json({ error: 'MFA not configured' });
 
-      const isValid = verify({ token: code, secret: user.mfa_secret });
+      const isValid = verifyMfaCode(code, user.mfa_secret);
       if (isValid) {
         db.run('UPDATE users SET mfa_enabled = 1 WHERE id = ?', [req.params.id], (updateErr) => {
           if (updateErr) return res.status(500).json({ error: 'Database error' });
@@ -147,6 +157,20 @@ module.exports = function(db) {
       } else {
         res.status(400).json({ error: 'Invalid verification code' });
       }
+    });
+  });
+
+  // DELETE /api/users/:id/mfa
+  router.delete('/:id/mfa', requireAdmin, (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    db.get('SELECT id FROM users WHERE id = ?', [id], (findErr, user) => {
+      if (findErr) return res.status(500).json({ error: 'Database error' });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      db.run('UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE id = ?', [id], function(updateErr) {
+        if (updateErr) return res.status(500).json({ error: 'Database error' });
+        res.json({ success: true, id, mfa_enabled: 0 });
+      });
     });
   });
 

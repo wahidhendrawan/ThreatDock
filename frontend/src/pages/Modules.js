@@ -4,6 +4,7 @@ import {
   TrendingUp, Network, Lock, Eye, Building2,
   AlertTriangle, Shield, ExternalLink, ChevronDown, ChevronUp
 } from 'lucide-react';
+import PaginationControls, { usePagination } from '../components/PaginationControls';
 
 // Helper to build auth headers
 function getAuthHeaders(authData) {
@@ -14,6 +15,23 @@ function getAuthHeaders(authData) {
     headers['Authorization'] = `Basic ${btoa(authData.basic.user + ':' + authData.basic.pass)}`;
   }
   return headers;
+}
+
+function PaginatedTable({ items, headers, renderRow, initialPageSize = 100 }) {
+  const pagination = usePagination(items || [], initialPageSize);
+  return (
+    <div className="table-container">
+      <table>
+        <thead>
+          <tr>{headers.map(header => <th key={header}>{header}</th>)}</tr>
+        </thead>
+        <tbody>
+          {pagination.pagedItems.map(renderRow)}
+        </tbody>
+      </table>
+      <PaginationControls pagination={pagination} />
+    </div>
+  );
 }
 
 // ============ Threat Hunting ============
@@ -113,6 +131,9 @@ export function ThreatHunting({ authData }) {
 export function AssetDiscovery({ authData }) {
   const [assets, setAssets] = useState([]);
   const [newAsset, setNewAsset] = useState({ domain: '', ip: '', port: '', service: '' });
+  const [scanTarget, setScanTarget] = useState('');
+  const [scanResult, setScanResult] = useState(null);
+  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     fetchAssets();
@@ -140,6 +161,26 @@ export function AssetDiscovery({ authData }) {
     } catch (e) { console.error(e); }
   };
 
+  const handleScan = async (e) => {
+    e.preventDefault();
+    if (!scanTarget.trim()) return;
+    setScanning(true);
+    setScanResult(null);
+    try {
+      const res = await fetch('/api/assets/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders(authData) },
+        body: JSON.stringify({ target: scanTarget.trim() })
+      });
+      const data = await res.json();
+      setScanResult(data);
+      if (res.ok) fetchAssets();
+    } catch (err) {
+      setScanResult({ error: err.message });
+    }
+    setScanning(false);
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
@@ -147,6 +188,29 @@ export function AssetDiscovery({ authData }) {
           <h1 className="page-title">External Asset Discovery</h1>
           <p className="page-subtitle">Discover and catalog external-facing assets (domains, IPs, services).</p>
         </div>
+      </div>
+      <div className="card">
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Scan Public Asset</h2>
+        <form onSubmit={handleScan} style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div className="form-group" style={{ flex: 1, minWidth: '240px' }}>
+            <label className="form-label">Domain or Host</label>
+            <input className="form-input" value={scanTarget} onChange={e => setScanTarget(e.target.value)} placeholder="example.com" />
+          </div>
+          <button type="submit" className="btn btn-primary" disabled={scanning} style={{ height: '42px' }}>
+            <Search size={16} /> {scanning ? 'Scanning...' : 'Scan'}
+          </button>
+        </form>
+        {scanResult && (
+          <div style={{ marginTop: '1rem', color: scanResult.error ? 'var(--danger)' : 'var(--text-muted)', fontSize: '0.875rem' }}>
+            {scanResult.error ? scanResult.error : (
+              <>
+                <div>IPs: {(scanResult.ips || []).join(', ') || '-'}</div>
+                <div>Open ports: {(scanResult.openPorts || []).join(', ') || '-'}</div>
+                <div>Saved assets: {(scanResult.saved || []).length}</div>
+              </>
+            )}
+          </div>
+        )}
       </div>
       <div className="card">
         <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Add Asset</h2>
@@ -177,23 +241,20 @@ export function AssetDiscovery({ authData }) {
             <Globe size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} /><p>No assets discovered yet. Add assets above to begin tracking.</p>
           </div>
         ) : (
-          <div className="table-container">
-            <table>
-              <thead><tr><th>Domain</th><th>IP</th><th>Port</th><th>Service</th><th>Status</th><th>Risk</th></tr></thead>
-              <tbody>
-                {assets.map(a => (
-                  <tr key={a.id}>
-                    <td style={{ fontWeight: 600 }}>{a.domain || '-'}</td>
-                    <td><code>{a.ip || '-'}</code></td>
-                    <td>{a.port || '-'}</td>
-                    <td>{a.service || '-'}</td>
-                    <td><span className={`severity-badge severity-${a.status === 'Active' ? 'High' : 'Low'}`}>{a.status}</span></td>
-                    <td>{a.risk_score}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PaginatedTable
+            items={assets}
+            headers={['Domain', 'IP', 'Port', 'Service', 'Status', 'Risk']}
+            renderRow={(a) => (
+              <tr key={a.id}>
+                <td style={{ fontWeight: 600 }}>{a.domain || '-'}</td>
+                <td><code>{a.ip || '-'}</code></td>
+                <td>{a.port || '-'}</td>
+                <td>{a.service || '-'}</td>
+                <td><span className={`severity-badge severity-${a.status === 'Active' ? 'High' : 'Low'}`}>{a.status}</span></td>
+                <td>{a.risk_score}</td>
+              </tr>
+            )}
+          />
         )}
       </div>
     </div>
@@ -464,12 +525,30 @@ export function ThreatAnalysis({ alerts }) {
 }
 
 // ============ Digital Risk ============
-export function DigitalRisk({ alerts }) {
-  const riskAlerts = useMemo(() => {
-    return alerts
-      .filter(a => a.severity === 'Critical' || a.severity === 'High')
-      .slice(0, 25);
-  }, [alerts]);
+export function DigitalRisk({ alerts, authData }) {
+  const [keyword, setKeyword] = useState('');
+  const [results, setResults] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [searching, setSearching] = useState(false);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!keyword.trim()) return;
+    setSearching(true);
+    try {
+      const res = await fetch('/api/osint/digital-risk/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders(authData) },
+        body: JSON.stringify({ keyword: keyword.trim() })
+      });
+      const data = await res.json();
+      setResults(data.results || []);
+      setNotes(data.notes || []);
+    } catch (err) {
+      setResults([{ provider: 'ThreatDock', type: 'Error', severity: 'Low', title: err.message }]);
+    }
+    setSearching(false);
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -480,27 +559,39 @@ export function DigitalRisk({ alerts }) {
         </div>
       </div>
       <div className="card">
-        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>High Risk Indicators ({riskAlerts.length})</h2>
-        {riskAlerts.length === 0 ? (
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Identity Exposure Search</h2>
+        <form onSubmit={handleSearch} style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div className="form-group" style={{ flex: 1, minWidth: '260px' }}>
+            <label className="form-label">Keyword, Email, Username, or Identity</label>
+            <input className="form-input" value={keyword} onChange={e => setKeyword(e.target.value)} placeholder="name, email@domain.com, brand identity..." />
+          </div>
+          <button type="submit" className="btn btn-primary" disabled={searching} style={{ height: '42px' }}>
+            <Search size={16} /> {searching ? 'Searching...' : 'Search Exposure'}
+          </button>
+        </form>
+        {notes.length > 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '1rem' }}>{notes.join(' ')}</p>}
+      </div>
+      <div className="card">
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Exposure Results ({results.length})</h2>
+        {results.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-            <Lock size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} /><p>No high-risk digital indicators detected.</p>
+            <Lock size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} /><p>Search for an identity to monitor leaks, mentions, and exposures.</p>
           </div>
         ) : (
-          <div className="table-container">
-            <table>
-              <thead><tr><th>Source</th><th>Severity</th><th>Title</th><th>Link</th></tr></thead>
-              <tbody>
-                {riskAlerts.map(a => (
-                  <tr key={a.id}>
-                    <td style={{ fontWeight: 600, color: 'var(--primary-color)' }}>{a.source}</td>
-                    <td><span className={`severity-badge severity-${a.severity}`}>{a.severity}</span></td>
-                    <td>{a.title?.substring(0, 80)}</td>
-                    <td>{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /></a> : '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PaginatedTable
+            items={results}
+            headers={['Provider', 'Type', 'Severity', 'Title', 'Date', 'Link']}
+            renderRow={(a, idx) => (
+              <tr key={`${a.provider}-${a.title}-${idx}`}>
+                <td style={{ fontWeight: 600, color: 'var(--primary-color)' }}>{a.provider}</td>
+                <td>{a.type || '-'}</td>
+                <td><span className={`severity-badge severity-${a.severity || 'Unknown'}`}>{a.severity || 'Unknown'}</span></td>
+                <td>{a.title?.substring(0, 80)}</td>
+                <td>{a.date ? new Date(a.date).toLocaleDateString() : '-'}</td>
+                <td>{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /></a> : '-'}</td>
+              </tr>
+            )}
+          />
         )}
       </div>
     </div>
@@ -508,15 +599,30 @@ export function DigitalRisk({ alerts }) {
 }
 
 // ============ Brand Exposure ============
-export function BrandExposure({ alerts }) {
-  const sourceStats = useMemo(() => {
-    const stats = {};
-    alerts.forEach(a => {
-      if (!stats[a.source]) stats[a.source] = 0;
-      stats[a.source]++;
-    });
-    return Object.entries(stats).sort((a, b) => b[1] - a[1]);
-  }, [alerts]);
+export function BrandExposure({ alerts, authData }) {
+  const [brand, setBrand] = useState('');
+  const [results, setResults] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [searching, setSearching] = useState(false);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!brand.trim()) return;
+    setSearching(true);
+    try {
+      const res = await fetch('/api/osint/brand/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders(authData) },
+        body: JSON.stringify({ brand: brand.trim() })
+      });
+      const data = await res.json();
+      setResults(data.results || []);
+      setNotes(data.notes || []);
+    } catch (err) {
+      setResults([{ provider: 'ThreatDock', type: 'Error', severity: 'Low', title: err.message }]);
+    }
+    setSearching(false);
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -527,15 +633,40 @@ export function BrandExposure({ alerts }) {
         </div>
       </div>
       <div className="card">
-        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Intelligence Feed Coverage</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
-          {sourceStats.map(([source, count]) => (
-            <div key={source} className="card" style={{ padding: '1rem', borderLeft: '3px solid var(--primary-color)' }}>
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{source}</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 800, marginTop: '0.25rem' }}>{count} alerts</div>
-            </div>
-          ))}
-        </div>
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Brand Exposure Search</h2>
+        <form onSubmit={handleSearch} style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div className="form-group" style={{ flex: 1, minWidth: '260px' }}>
+            <label className="form-label">Brand, Domain, or Product</label>
+            <input className="form-input" value={brand} onChange={e => setBrand(e.target.value)} placeholder="example.com, product name, company name..." />
+          </div>
+          <button type="submit" className="btn btn-primary" disabled={searching} style={{ height: '42px' }}>
+            <Search size={16} /> {searching ? 'Searching...' : 'Search Brand'}
+          </button>
+        </form>
+        {notes.length > 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '1rem' }}>{notes.join(' ')}</p>}
+      </div>
+      <div className="card">
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Brand Exposure Results ({results.length})</h2>
+        {results.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+            <Eye size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} /><p>Search a brand or domain to find mentions, certificates, phishing indicators, and online exposure.</p>
+          </div>
+        ) : (
+          <PaginatedTable
+            items={results}
+            headers={['Provider', 'Type', 'Severity', 'Title', 'Date', 'Link']}
+            renderRow={(item, idx) => (
+              <tr key={`${item.provider}-${item.title}-${idx}`}>
+                <td style={{ fontWeight: 600, color: 'var(--primary-color)' }}>{item.provider}</td>
+                <td>{item.type || '-'}</td>
+                <td><span className={`severity-badge severity-${item.severity || 'Unknown'}`}>{item.severity || 'Unknown'}</span></td>
+                <td>{item.title?.substring(0, 100)}</td>
+                <td>{item.date ? new Date(item.date).toLocaleDateString() : '-'}</td>
+                <td>{item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /></a> : '-'}</td>
+              </tr>
+            )}
+          />
+        )}
       </div>
     </div>
   );
@@ -545,6 +676,7 @@ export function BrandExposure({ alerts }) {
 export function ThirdPartyRisk({ authData }) {
   const [vendors, setVendors] = useState([]);
   const [newVendor, setNewVendor] = useState({ name: '', category: '', risk_score: 0, contact: '' });
+  const [assessment, setAssessment] = useState(null);
 
   useEffect(() => {
     fetchVendors();
@@ -570,6 +702,20 @@ export function ThirdPartyRisk({ authData }) {
         fetchVendors();
       }
     } catch (e) { console.error(e); }
+  };
+
+  const handleAssess = async (id) => {
+    try {
+      const res = await fetch(`/api/vendors/${id}/assess`, {
+        method: 'POST',
+        headers: getAuthHeaders(authData)
+      });
+      const data = await res.json();
+      setAssessment(data);
+      if (res.ok) fetchVendors();
+    } catch (err) {
+      setAssessment({ error: err.message });
+    }
   };
 
   return (
@@ -602,6 +748,31 @@ export function ThirdPartyRisk({ authData }) {
           <button type="submit" className="btn btn-primary" style={{ height: '42px' }}>Add Vendor</button>
         </form>
       </div>
+      {assessment && (
+        <div className="card">
+          <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Latest Assessment</h2>
+          <p style={{ color: assessment.error ? 'var(--danger)' : 'var(--text-muted)' }}>
+            {assessment.error || assessment.notes}
+          </p>
+          {assessment.matches && assessment.matches.length > 0 && (
+            <div className="table-container" style={{ marginTop: '1rem' }}>
+              <table>
+                <thead><tr><th>Source</th><th>Severity</th><th>Title</th><th>Date</th></tr></thead>
+                <tbody>
+                  {assessment.matches.slice(0, 10).map(match => (
+                    <tr key={`${match.source}-${match.externalId}-${match.id}`}>
+                      <td>{match.source}</td>
+                      <td><span className={`severity-badge severity-${match.severity || 'Unknown'}`}>{match.severity || 'Unknown'}</span></td>
+                      <td>{match.title?.substring(0, 100)}</td>
+                      <td>{match.date ? new Date(match.date).toLocaleDateString() : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
       <div className="card">
         <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Vendor Registry ({vendors.length})</h2>
         {vendors.length === 0 ? (
@@ -609,22 +780,21 @@ export function ThirdPartyRisk({ authData }) {
             <Building2 size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} /><p>No vendors registered yet.</p>
           </div>
         ) : (
-          <div className="table-container">
-            <table>
-              <thead><tr><th>Vendor</th><th>Category</th><th>Risk Score</th><th>Status</th><th>Contact</th></tr></thead>
-              <tbody>
-                {vendors.map(v => (
-                  <tr key={v.id}>
-                    <td style={{ fontWeight: 600 }}>{v.name}</td>
-                    <td>{v.category || '-'}</td>
-                    <td><span className={`severity-badge severity-${v.risk_score >= 75 ? 'Critical' : v.risk_score >= 50 ? 'High' : v.risk_score >= 25 ? 'Medium' : 'Low'}`}>{v.risk_score}</span></td>
-                    <td>{v.status}</td>
-                    <td>{v.contact || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PaginatedTable
+            items={vendors}
+            headers={['Vendor', 'Category', 'Risk Score', 'Status', 'Contact', 'Last Assessment', 'Actions']}
+            renderRow={(v) => (
+              <tr key={v.id}>
+                <td style={{ fontWeight: 600 }}>{v.name}</td>
+                <td>{v.category || '-'}</td>
+                <td><span className={`severity-badge severity-${v.risk_score >= 75 ? 'Critical' : v.risk_score >= 50 ? 'High' : v.risk_score >= 25 ? 'Medium' : 'Low'}`}>{v.risk_score}</span></td>
+                <td>{v.status}</td>
+                <td>{v.contact || '-'}</td>
+                <td>{v.last_assessment ? new Date(v.last_assessment).toLocaleString() : '-'}</td>
+                <td><button className="btn btn-outline" onClick={() => handleAssess(v.id)}>Assess</button></td>
+              </tr>
+            )}
+          />
         )}
       </div>
     </div>

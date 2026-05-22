@@ -97,6 +97,7 @@ function AppContent() {
   const [tempToken, setTempToken] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [mfaSetupRequired, setMfaSetupRequired] = useState(false);
+  const [mfaSetupData, setMfaSetupData] = useState(null);
 
   // SSO State
   const [ssoConfig, setSsoConfig] = useState(null);
@@ -123,6 +124,14 @@ function AppContent() {
         .then(data => {
           if (data.error) {
             setLoginError(data.error);
+          } else if (data.requiresMfa) {
+            setMfaRequired(true);
+            setTempToken(data.tempToken);
+            setMfaSetupRequired(data.setupRequired);
+            setMfaSetupData(null);
+            setMfaCode('');
+            setNeedsAuth(true);
+            window.history.replaceState({}, document.title, "/");
           } else if (data.access_token) {
             localStorage.setItem('threatdock_token', data.access_token);
             localStorage.setItem('threatdock_user', JSON.stringify(data.user));
@@ -225,12 +234,33 @@ function AppContent() {
           setMfaRequired(true);
           setTempToken(data.tempToken);
           setMfaSetupRequired(data.setupRequired);
+          setMfaSetupData(null);
+          setMfaCode('');
         } else {
           localStorage.setItem('threatdock_token', data.access_token);
           localStorage.setItem('threatdock_user', JSON.stringify(data.user));
           setAuthData({ token: data.access_token, user: data.user });
           setNeedsAuth(false);
         }
+      })
+      .catch(() => setLoginError('Network error. Please try again.'));
+  };
+
+  const handleStartMfaSetup = () => {
+    setLoginError('');
+
+    fetch(`${API_BASE}/auth/setup-mfa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tempToken })
+    })
+      .then(res => res.json().then(data => ({ status: res.status, data })))
+      .then(({ status, data }) => {
+        if (status !== 200) {
+          setLoginError(data.error || 'Failed to start MFA setup.');
+          return;
+        }
+        setMfaSetupData(data);
       })
       .catch(() => setLoginError('Network error. Please try again.'));
   };
@@ -256,6 +286,9 @@ function AppContent() {
         setNeedsAuth(false);
         setMfaRequired(false);
         setTempToken('');
+        setMfaSetupRequired(false);
+        setMfaSetupData(null);
+        setMfaCode('');
       })
       .catch(() => setLoginError('Network error. Please try again.'));
   };
@@ -267,6 +300,8 @@ function AppContent() {
     setAlerts([]);
     setNeedsAuth(true);
     setMfaRequired(false);
+    setMfaSetupRequired(false);
+    setMfaSetupData(null);
     setLoginUser('');
     setLoginPass('');
     setMfaCode('');
@@ -348,11 +383,28 @@ function AppContent() {
               <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
                 <h3 style={{ color: 'var(--text-main)', marginBottom: '0.5rem' }}>Two-Factor Authentication</h3>
                 <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                  {mfaSetupRequired ? 'MFA is required but not configured. Please contact Administrator to set up your device.' : 'Enter the 6-digit code from your authenticator app.'}
+                  {mfaSetupRequired ? 'MFA is required. Register an authenticator app before continuing.' : 'Enter the 6-digit code from your authenticator app.'}
                 </p>
               </div>
               
-              {!mfaSetupRequired && (
+              {mfaSetupRequired && !mfaSetupData && (
+                <button type="button" onClick={handleStartMfaSetup} className="btn btn-primary btn-block" style={{ padding: '0.875rem', fontSize: '1rem' }}>
+                  Set Up 2FA
+                </button>
+              )}
+
+              {mfaSetupData && (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ background: 'white', padding: '1rem', borderRadius: '8px', display: 'inline-block', marginBottom: '1rem' }}>
+                    <img src={mfaSetupData.qrCodeUrl} alt="MFA QR Code" style={{ width: '180px', height: '180px' }} />
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', wordBreak: 'break-all' }}>
+                    Secret: {mfaSetupData.secret}
+                  </p>
+                </div>
+              )}
+
+              {(!mfaSetupRequired || mfaSetupData) && (
                 <>
                   <div className="form-group">
                     <input 
@@ -368,12 +420,12 @@ function AppContent() {
                     />
                   </div>
                   <button type="submit" className="btn btn-primary btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
-                    Verify
+                    Verify & Sign In
                   </button>
                 </>
               )}
               
-              <button type="button" onClick={() => setMfaRequired(false)} className="btn btn-outline btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
+              <button type="button" onClick={() => { setMfaRequired(false); setMfaSetupRequired(false); setMfaSetupData(null); setMfaCode(''); }} className="btn btn-outline btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
                 Back to Login
               </button>
             </form>
@@ -412,8 +464,8 @@ function AppContent() {
         <Route path="/prioritization" element={<VulnPrioritization alerts={filteredAlerts} />} />
         <Route path="/predictive" element={<PredictiveIntel alerts={filteredAlerts} />} />
         <Route path="/analysis" element={<ThreatAnalysis alerts={filteredAlerts} />} />
-        <Route path="/digital-risk" element={<DigitalRisk alerts={filteredAlerts} />} />
-        <Route path="/brand" element={<BrandExposure alerts={filteredAlerts} />} />
+        <Route path="/digital-risk" element={<DigitalRisk alerts={filteredAlerts} authData={authData} />} />
+        <Route path="/brand" element={<BrandExposure alerts={filteredAlerts} authData={authData} />} />
         <Route path="/third-party" element={<ThirdPartyRisk authData={authData} />} />
         <Route path="/settings" element={<Settings authData={authData} />} />
         <Route path="*" element={<Navigate to="/" replace />} />

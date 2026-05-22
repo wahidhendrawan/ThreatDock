@@ -22,6 +22,50 @@ module.exports = function createVendorsRouter(db) {
     stmt.finalize();
   });
 
+  // POST /api/vendors/:id/assess
+  router.post('/:id/assess', (req, res) => {
+    db.get('SELECT * FROM vendors WHERE id = ?', [req.params.id], (findErr, vendor) => {
+      if (findErr) return res.status(500).json({ error: findErr.message });
+      if (!vendor) return res.status(404).json({ error: 'Vendor not found' });
+
+      const keyword = `%${vendor.name}%`;
+      db.all(
+        `SELECT id, source, externalId, title, severity, date, url
+         FROM alerts
+         WHERE lower(title) LIKE lower(?) OR lower(externalId) LIKE lower(?) OR lower(source) LIKE lower(?)
+         ORDER BY CASE severity
+           WHEN 'Critical' THEN 1
+           WHEN 'High' THEN 2
+           WHEN 'Medium' THEN 3
+           WHEN 'Low' THEN 4
+           ELSE 5 END, date DESC
+         LIMIT 100`,
+        [keyword, keyword, keyword],
+        (alertErr, alerts) => {
+          if (alertErr) return res.status(500).json({ error: alertErr.message });
+
+          const score = Math.min(100, alerts.reduce((acc, alert) => {
+            if (alert.severity === 'Critical') return acc + 20;
+            if (alert.severity === 'High') return acc + 12;
+            if (alert.severity === 'Medium') return acc + 6;
+            if (alert.severity === 'Low') return acc + 2;
+            return acc + 1;
+          }, 0));
+          const notes = `Automated assessment found ${alerts.length} related alert(s) for "${vendor.name}".`;
+
+          db.run(
+            `UPDATE vendors SET risk_score = ?, last_assessment = datetime('now'), notes = ? WHERE id = ?`,
+            [score, notes, vendor.id],
+            (updateErr) => {
+              if (updateErr) return res.status(500).json({ error: updateErr.message });
+              res.json({ id: vendor.id, risk_score: score, notes, matches: alerts });
+            }
+          );
+        }
+      );
+    });
+  });
+
   // PATCH /api/vendors/:id
   router.patch('/:id', (req, res) => {
     const { status, risk_score, last_assessment, notes } = req.body;

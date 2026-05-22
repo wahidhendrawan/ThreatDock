@@ -1,10 +1,21 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { authenticator } = require('otplib');
+const { generateSecret, generateURI, verifySync } = require('otplib');
+const qrcode = require('qrcode');
 const { exchangeCodeForToken, getUserInfo } = require('../services/oauth');
 
 const router = express.Router();
+
+const verifyMfaCode = (code, secret) => {
+  if (!/^\d{6}$/.test(String(code || ''))) return false;
+  const result = verifySync({
+    token: String(code),
+    secret,
+    window: 0
+  });
+  return Boolean(result && result.valid === true);
+};
 
 // Helper to get settings from DB
 const getSettings = (db) => {
@@ -82,6 +93,20 @@ router.post('/callback', async (req, res) => {
       }
 
       const generateTokenAndRespond = (dbUser) => {
+        const globalMfaRequired = settings.MFA_REQUIRED === 'true';
+        const analystMfaRequired = settings.ANALYST_MFA_REQUIRED === 'true' && dbUser.role === 'Analyst';
+        const mustUseMfa = dbUser.mfa_enabled || globalMfaRequired || analystMfaRequired;
+        const hasConfiguredMfa = Boolean(dbUser.mfa_enabled && dbUser.mfa_secret);
+
+        if (mustUseMfa) {
+          const tempToken = jwt.sign({ id: dbUser.id, mfaPending: true }, settings.JWT_SECRET, { expiresIn: '5m' });
+          return res.json({
+            requiresMfa: true,
+            tempToken,
+            setupRequired: !hasConfiguredMfa
+          });
+        }
+
         const token = jwt.sign(
           { id: dbUser.id, name: dbUser.username, email: dbUser.email, role: dbUser.role, type: 'sso' }, 
           settings.JWT_SECRET, 
@@ -150,6 +175,7 @@ router.post('/local-login', async (req, res) => {
       const globalMfaRequired = settings.MFA_REQUIRED === 'true';
       const analystMfaRequired = settings.ANALYST_MFA_REQUIRED === 'true' && user.role === 'Analyst';
       const mustUseMfa = user.mfa_enabled || globalMfaRequired || analystMfaRequired;
+      const hasConfiguredMfa = Boolean(user.mfa_enabled && user.mfa_secret);
 
       if (mustUseMfa) {
         // Return temp token for MFA verification step
@@ -157,7 +183,7 @@ router.post('/local-login', async (req, res) => {
         return res.json({ 
           requiresMfa: true, 
           tempToken, 
-          setupRequired: !user.mfa_enabled // User hasn't configured MFA yet but it's globally required
+          setupRequired: !hasConfiguredMfa
         });
       }
 
@@ -171,6 +197,37 @@ router.post('/local-login', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// POST /auth/setup-mfa - Start forced MFA enrollment during login
+router.post('/setup-mfa', async (req, res) => {
+  const { tempToken } = req.body;
+  if (!tempToken) return res.status(400).json({ error: 'Missing token' });
+
+  try {
+    const settings = await getSettings(req.db);
+    const decoded = jwt.verify(tempToken, settings.JWT_SECRET);
+    if (!decoded.mfaPending) return res.status(400).json({ error: 'Invalid token' });
+
+    req.db.get('SELECT id, username FROM users WHERE id = ?', [decoded.id], async (err, user) => {
+      if (err || !user) return res.status(401).json({ error: 'User not found' });
+
+      const secret = generateSecret();
+      const otpauth = generateURI({ accountName: user.username, issuer: 'ThreatDock', secret });
+
+      try {
+        const qrCodeUrl = await qrcode.toDataURL(otpauth);
+        req.db.run('UPDATE users SET mfa_secret = ?, mfa_enabled = 0 WHERE id = ?', [secret, user.id], (updateErr) => {
+          if (updateErr) return res.status(500).json({ error: 'Failed to save MFA secret' });
+          res.json({ secret, qrCodeUrl });
+        });
+      } catch (qrErr) {
+        res.status(500).json({ error: 'Failed to generate QR code' });
+      }
+    });
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
   }
 });
 
@@ -189,7 +246,7 @@ router.post('/verify-mfa', async (req, res) => {
       
       if (!user.mfa_secret) return res.status(400).json({ error: 'MFA not configured for this user' });
 
-      const isValid = authenticator.verify({ token: code, secret: user.mfa_secret });
+      const isValid = verifyMfaCode(code, user.mfa_secret);
       if (!isValid) return res.status(401).json({ error: 'Invalid MFA code' });
 
       // Ensure MFA is marked enabled since they just successfully logged in
