@@ -10,6 +10,8 @@ const axios = require('axios');
  *
  * To enable Slack notifications, set `SLACK_WEBHOOK_URL` in your
  * environment. To enable n8n webhooks, set `N8N_WEBHOOK_URL`.
+ * To enable Telegram notifications, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+ * To enable MS Teams notifications, set `TEAMS_WEBHOOK_URL`.
  * Optionally set `NOTIFY_THRESHOLD` to one of
  * "Critical", "High", "Medium" or "Low".  Alerts with severity
  * equal to or above this threshold will trigger a notification.
@@ -61,4 +63,49 @@ async function sendN8nWebhook(alerts) {
   }
 }
 
-module.exports = { sendSlackNotifications, sendN8nWebhook };
+async function sendTelegramNotifications(alerts) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) {
+    return;
+  }
+  const threshold = process.env.NOTIFY_THRESHOLD || 'High';
+  const thresholdValue = severityOrder[threshold] || 1;
+  const messages = alerts.filter(a => severityOrder[a.severity] >= thresholdValue);
+  if (messages.length === 0) return;
+  try {
+    for (const alert of messages) {
+      const text = `⚠️ *New ${alert.severity} alert from ${alert.source}*\n${alert.title}\n[Link](${alert.url})`;
+      await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
+        chat_id: chatId,
+        text: text,
+        parse_mode: 'Markdown'
+      }, { timeout: 10000 });
+    }
+  } catch (err) {
+    console.error('Failed to send Telegram notification:', err.message);
+  }
+}
+
+async function sendTeamsWebhook(alerts) {
+  const webhook = process.env.TEAMS_WEBHOOK_URL;
+  if (!webhook) {
+    return;
+  }
+  const threshold = process.env.NOTIFY_THRESHOLD || 'High';
+  const thresholdValue = severityOrder[threshold] || 1;
+  const messages = alerts.filter(a => severityOrder[a.severity] >= thresholdValue);
+  if (messages.length === 0) return;
+  try {
+    for (const alert of messages) {
+      const payload = {
+        text: `⚠️ **New ${alert.severity} alert from ${alert.source}**\n\n${alert.title}\n\n[Link](${alert.url})`
+      };
+      await axios.post(webhook, payload, { timeout: 10000 });
+    }
+  } catch (err) {
+    console.error('Failed to send Teams webhook:', err.message);
+  }
+}
+
+module.exports = { sendSlackNotifications, sendN8nWebhook, sendTelegramNotifications, sendTeamsWebhook };

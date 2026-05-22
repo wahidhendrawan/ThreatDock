@@ -601,6 +601,57 @@ export default function Settings({ authData }) {
             </div>
 
             <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <StatusDot value={settings.TELEGRAM_BOT_TOKEN} />
+                Telegram Bot Token
+              </label>
+              <input
+                type="password"
+                className="form-input"
+                value={settings.TELEGRAM_BOT_TOKEN || ''}
+                onChange={(e) => setSettings({ ...settings, TELEGRAM_BOT_TOKEN: e.target.value })}
+                placeholder="123456789:ABCdefGHIjklMNO..."
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Bot token from BotFather for sending Telegram notifications.
+              </span>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <StatusDot value={settings.TELEGRAM_CHAT_ID} />
+                Telegram Chat ID
+              </label>
+              <input
+                type="password"
+                className="form-input"
+                value={settings.TELEGRAM_CHAT_ID || ''}
+                onChange={(e) => setSettings({ ...settings, TELEGRAM_CHAT_ID: e.target.value })}
+                placeholder="-1001234567890"
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Chat ID or Channel ID where Telegram messages should be sent.
+              </span>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <StatusDot value={settings.TEAMS_WEBHOOK_URL} />
+                Microsoft Teams Webhook URL
+              </label>
+              <input
+                type="password"
+                className="form-input"
+                value={settings.TEAMS_WEBHOOK_URL || ''}
+                onChange={(e) => setSettings({ ...settings, TEAMS_WEBHOOK_URL: e.target.value })}
+                placeholder="https://yourdomain.webhook.office.com/webhookb2/..."
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Incoming webhook URL for a Microsoft Teams channel.
+              </span>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
               <label className="form-label">Notification Threshold</label>
               <select
                 className="form-select"
