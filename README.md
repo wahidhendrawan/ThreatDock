@@ -12,8 +12,8 @@ ThreatDock is a professional-grade security alert aggregator and threat intellig
 - **Extensible Backend**: Modular service-based architecture (Node.js/Express) for easy integration of new TI sources.
 - **Automated Notifications**: Slack integration with customizable severity thresholds.
 - **SOC-Ready**: Supports alert status management (Open/In Progress/Closed) and manual enrichment.
-- **SSO Integration**: Out-of-the-box support for Authentik OAuth2 Single Sign-On.
-- **Dynamic Configuration**: Manage users and application settings directly from the web interface, backed by a persistent SQLite database.
+- **SSO Integration**: Out-of-the-box support for Authentik OAuth2 Single Sign-On, fully integrated with local User Management and Role-Based Access Control (RBAC).
+- **Dynamic Configuration**: Manage users, assign roles (Admin/Analyst) to both local and SSO users, and configure settings directly from the web interface, backed by a persistent SQLite database.
 - **Enterprise Architecture**: Built-in Nginx Reverse Proxy handles API routing (`/api` and `/auth`) transparently without cross-origin issues or SSL mixed-content errors.
 
 ---
