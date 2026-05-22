@@ -71,11 +71,48 @@ router.post('/callback', async (req, res) => {
     const tokenData = await exchangeCodeForToken(code, redirectUri, settings);
     const userInfo = await getUserInfo(tokenData.access_token, settings);
 
-    // Provide the access token to the frontend
-    res.json({
-      access_token: tokenData.access_token,
-      id_token: tokenData.id_token,
-      user: userInfo
+    // Sync SSO user to local database
+    const email = userInfo.email || userInfo.preferred_username || userInfo.sub;
+    const username = userInfo.preferred_username || userInfo.name || email;
+    
+    req.db.get('SELECT * FROM users WHERE email = ? OR username = ?', [email, username], (err, user) => {
+      if (err) {
+        console.error('Database error checking SSO user:', err);
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      const generateTokenAndRespond = (dbUser) => {
+        const token = jwt.sign(
+          { id: dbUser.id, name: dbUser.username, email: dbUser.email, role: dbUser.role, type: 'sso' }, 
+          settings.JWT_SECRET, 
+          { expiresIn: '8h' }
+        );
+        res.json({
+          access_token: token,
+          user: { name: dbUser.username, role: dbUser.role }
+        });
+      };
+
+      if (user) {
+        generateTokenAndRespond(user);
+      } else {
+        req.db.run(
+          'INSERT INTO users (username, email, role, password_hash) VALUES (?, ?, ?, ?)',
+          [username, email, 'Analyst', 'sso_managed'],
+          function(insertErr) {
+            if (insertErr) {
+              console.error('Failed to create SSO user:', insertErr);
+              return res.status(500).json({ error: 'Failed to create user' });
+            }
+            generateTokenAndRespond({
+              id: this.lastID,
+              username,
+              email,
+              role: 'Analyst'
+            });
+          }
+        );
+      }
     });
   } catch (err) {
     console.error('Callback error:', err);
