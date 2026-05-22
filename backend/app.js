@@ -261,14 +261,19 @@ async function fetchAllSources() {
     // Process ThreatFox IOCs
     if (Array.isArray(tfData)) {
       for (const ioc of tfData) {
+        const iocValue = ioc.ioc || ioc.indicator || ioc.value || '';
+        const iocType = (ioc.ioc_type || '').toLowerCase();
+        const alertUrl = (iocType === 'url' || iocType === 'domain' || iocType === 'ip:port' || iocType === 'ip')
+          ? iocValue
+          : (ioc.id ? `https://threatfox.abuse.ch/ioc/${ioc.id}` : '');
+
         alerts.push({
           source: 'ThreatFox',
           externalId: ioc.id ? ioc.id.toString() : '',
-          title: `ThreatFox IOC (${ioc.ioc_type || 'unknown'})`,
+          title: iocValue || `ThreatFox IOC (${ioc.ioc_type || 'unknown'})`,
           severity: 'High', // treat ThreatFox IOCs as high severity
           date: ioc.first_seen || '',
-          url: ioc.id ? `https://threatfox.abuse.ch/ioc/${ioc.id}` : ''
-        ,
+          url: alertUrl,
           status: 'Open',
           attack_phase: 'Unknown'
         });

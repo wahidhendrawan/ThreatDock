@@ -8,7 +8,8 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip
+  Tooltip,
+  Cell
 } from 'recharts';
 
 function Stats({ alerts }) {
@@ -38,6 +39,8 @@ function Stats({ alerts }) {
 
   const timeData = Object.keys(dateCounts)
     .map(key => ({ date: key, count: dateCounts[key] }));
+
+  const timelineData = timeData.length > 0 ? timeData : [{ date: 'No Date', count: alerts.length }];
 
   // Helper to get color depending on severity
   const getSeverityColor = (sev) => {
@@ -123,7 +126,7 @@ function Stats({ alerts }) {
                   >
                     {
                       severityData.map((entry, index) => (
-                        <Bar key={`cell-${index}`} fill={getSeverityColor(entry.severity)} />
+                        <Cell key={`cell-${index}`} fill={getSeverityColor(entry.severity)} />
                       ))
                     }
                   </Bar>
@@ -136,7 +139,7 @@ function Stats({ alerts }) {
             <h3 style={{ fontSize: '0.875rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '1rem' }}>Alerts Timeline</h3>
             <div className="chart-wrapper">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={timeData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <LineChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255, 255, 255, 0.05)" />
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 500}} />
                   <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} />
