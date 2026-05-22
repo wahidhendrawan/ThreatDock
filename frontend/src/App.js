@@ -284,7 +284,7 @@ function AppContent() {
               </svg>
             </div>
             <h1 className="brand-title" style={{ fontSize: '2rem', marginTop: '1rem', color: 'var(--text-main)' }}>ThreatDock</h1>
-            <p className="page-subtitle" style={{ marginTop: '0.5rem' }}>Enterprise Threat Intelligence Platform</p>
+            <p className="page-subtitle" style={{ marginTop: '0.5rem' }}>Centralized Threat Intelligence Platform</p>
           </div>
           
           {loginError && (
@@ -380,7 +380,7 @@ function AppContent() {
           )}
           
           <p style={{ marginTop: '1.5rem', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-            Protected by ThreatDock Security
+            <a href="https://www.linkedin.com/in/wahid-hendrawan-398385176" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>by Wahid Hendrawan</a>
           </p>
         </div>
       </div>
