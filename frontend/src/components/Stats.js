@@ -9,8 +9,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Cell,
-  LabelList
+  Cell
 } from 'recharts';
 
 function Stats({ alerts }) {
@@ -120,7 +119,7 @@ function Stats({ alerts }) {
                   <XAxis dataKey="severity" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 500}} />
                   <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} />
                   <Tooltip 
-                    formatter={(value) => [`${value} alerts`, 'Count']}
+                    formatter={(value) => [value, 'Total Alerts']}
                     labelFormatter={(label) => `Severity: ${label}`}
                     cursor={{fill: 'rgba(255, 255, 255, 0.02)'}} 
                     contentStyle={{
@@ -141,7 +140,6 @@ function Stats({ alerts }) {
                         <Cell key={`cell-${index}`} fill={getSeverityColor(entry.severity)} />
                       ))
                     }
-                    <LabelList dataKey="count" position="top" fill="#cbd5e1" fontSize={11} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>

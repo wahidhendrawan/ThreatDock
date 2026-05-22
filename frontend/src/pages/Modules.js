@@ -207,6 +207,18 @@ export function AssetDiscovery({ authData }) {
                 <div>IPs: {(scanResult.ips || []).join(', ') || '-'}</div>
                 <div>Open ports: {(scanResult.openPorts || []).join(', ') || '-'}</div>
                 <div>Saved assets: {(scanResult.saved || []).length}</div>
+                {(scanResult.enrichments || []).length > 0 && (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    {(scanResult.enrichments || []).map((item, index) => (
+                      <div key={`${item.provider}-${index}`}>
+                        {item.provider}: {item.error ? item.error : `${item.count || 0} ${item.type || 'result'} found`}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {(scanResult.recommendations || []).length > 0 && (
+                  <div style={{ marginTop: '0.75rem' }}>{scanResult.recommendations.join(' ')}</div>
+                )}
               </>
             )}
           </div>
@@ -757,7 +769,7 @@ export function ThirdPartyRisk({ authData }) {
           {assessment.matches && assessment.matches.length > 0 && (
             <div className="table-container" style={{ marginTop: '1rem' }}>
               <table>
-                <thead><tr><th>Source</th><th>Severity</th><th>Title</th><th>Date</th></tr></thead>
+                <thead><tr><th>Source</th><th>Severity</th><th>Title</th><th>Date</th><th>Link</th></tr></thead>
                 <tbody>
                   {assessment.matches.slice(0, 10).map(match => (
                     <tr key={`${match.source}-${match.externalId}-${match.id}`}>
@@ -765,6 +777,7 @@ export function ThirdPartyRisk({ authData }) {
                       <td><span className={`severity-badge severity-${match.severity || 'Unknown'}`}>{match.severity || 'Unknown'}</span></td>
                       <td>{match.title?.substring(0, 100)}</td>
                       <td>{match.date ? new Date(match.date).toLocaleDateString() : '-'}</td>
+                      <td>{match.url ? <a href={match.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /></a> : '-'}</td>
                     </tr>
                   ))}
                 </tbody>

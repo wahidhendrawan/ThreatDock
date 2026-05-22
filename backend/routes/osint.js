@@ -22,6 +22,10 @@ function uniqueBy(items, keyFn) {
   });
 }
 
+function buildHeaders(key, name) {
+  return key ? { [name]: key } : {};
+}
+
 module.exports = function createOsintRouter(db) {
   const router = express.Router();
 
@@ -33,6 +37,8 @@ module.exports = function createOsintRouter(db) {
       const settings = await getSettings(db);
       const results = [];
       const providers = [];
+      const otxKey = settings.OTX_API_KEY || process.env.OTX_API_KEY;
+      const urlscanKey = settings.URLSCAN_API_KEY || process.env.URLSCAN_API_KEY;
 
       const hibpKey = settings.HIBP_API_KEY || process.env.HIBP_API_KEY;
       if (hibpKey && keyword.includes('@')) {
@@ -92,6 +98,49 @@ module.exports = function createOsintRouter(db) {
         }
       }
 
+      if (otxKey) {
+        providers.push('AlienVault OTX');
+        try {
+          const response = await axios.get('https://otx.alienvault.com/api/v1/search/pulses', {
+            headers: { 'X-OTX-API-KEY': otxKey },
+            params: { q: keyword, limit: 20 },
+            timeout: 10000
+          });
+          const pulses = response.data.results || [];
+          pulses.forEach(pulse => results.push({
+            provider: 'AlienVault OTX',
+            type: 'Dark Web / Threat Intel Mention',
+            title: pulse.name || `OTX pulse for ${keyword}`,
+            severity: pulse.indicator_count > 10 ? 'High' : 'Medium',
+            date: pulse.modified || pulse.created,
+            url: pulse.id ? `https://otx.alienvault.com/pulse/${pulse.id}` : 'https://otx.alienvault.com/',
+            description: pulse.description || ''
+          }));
+        } catch (err) {
+          results.push({ provider: 'AlienVault OTX', type: 'Provider Error', severity: 'Low', title: err.message });
+        }
+      }
+
+      providers.push('URLScan.io');
+      try {
+        const response = await axios.get('https://urlscan.io/api/v1/search/', {
+          headers: buildHeaders(urlscanKey, 'API-Key'),
+          params: { q: keyword, size: 25 },
+          timeout: 10000
+        });
+        (response.data.results || []).forEach(item => results.push({
+          provider: 'URLScan.io',
+          type: 'Internet Exposure Mention',
+          title: (item.page && (item.page.title || item.page.url || item.page.domain)) || `URLScan result for ${keyword}`,
+          severity: item.verdicts && item.verdicts.overall && item.verdicts.overall.malicious ? 'High' : 'Low',
+          date: item.task && item.task.time,
+          url: item.result || (item.task && item.task.url),
+          description: item.page && item.page.domain
+        }));
+      } catch (err) {
+        results.push({ provider: 'URLScan.io', type: 'Provider Error', severity: 'Low', title: err.message });
+      }
+
       db.all(
         `SELECT source, externalId, title, severity, date, url
          FROM alerts
@@ -116,8 +165,8 @@ module.exports = function createOsintRouter(db) {
             providers,
             results: uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`),
             notes: [
-              'Dark web and credential leak search requires provider API keys such as HIBP_API_KEY, INTELX_API_KEY, DeHashed, SpyCloud, or SOCRadar.',
-              'Without those keys, ThreatDock returns local threat-intel matches only.'
+              'Free/community coverage uses URLScan.io and AlienVault OTX API keys for internet and threat-intel mentions.',
+              'Credential and dark-web breach depth improves with HIBP_API_KEY and INTELX_API_KEY; without keys, results are limited to public/community sources and local alerts.'
             ]
           });
         }
@@ -133,7 +182,11 @@ module.exports = function createOsintRouter(db) {
 
     try {
       const normalizedDomain = brand.includes('.') ? brand : null;
+      const settings = await getSettings(db);
       const results = [];
+      const otxKey = settings.OTX_API_KEY || process.env.OTX_API_KEY;
+      const urlscanKey = settings.URLSCAN_API_KEY || process.env.URLSCAN_API_KEY;
+      const vtKey = settings.VIRUSTOTAL_API_KEY || process.env.VIRUSTOTAL_API_KEY;
       if (normalizedDomain) {
         try {
           const crtResponse = await axios.get(`https://crt.sh/?q=${encodeURIComponent(normalizedDomain)}&output=json`, {
@@ -155,6 +208,70 @@ module.exports = function createOsintRouter(db) {
           }
         } catch (err) {
           results.push({ provider: 'crt.sh', type: 'Provider Error', severity: 'Low', title: err.message });
+        }
+      }
+
+      try {
+        const response = await axios.get('https://urlscan.io/api/v1/search/', {
+          headers: buildHeaders(urlscanKey, 'API-Key'),
+          params: { q: normalizedDomain ? `domain:${normalizedDomain}` : brand, size: 50 },
+          timeout: 10000
+        });
+        (response.data.results || []).forEach(item => results.push({
+          provider: 'URLScan.io',
+          type: item.verdicts && item.verdicts.overall && item.verdicts.overall.malicious ? 'Suspicious Brand Exposure' : 'Brand / Domain Observation',
+          title: (item.page && (item.page.url || item.page.domain)) || `URLScan result for ${brand}`,
+          severity: item.verdicts && item.verdicts.overall && item.verdicts.overall.malicious ? 'High' : 'Low',
+          date: item.task && item.task.time,
+          url: item.result || (item.task && item.task.url),
+          description: item.page && item.page.ip
+        }));
+      } catch (err) {
+        results.push({ provider: 'URLScan.io', type: 'Provider Error', severity: 'Low', title: err.message });
+      }
+
+      if (otxKey) {
+        try {
+          const response = await axios.get('https://otx.alienvault.com/api/v1/search/pulses', {
+            headers: { 'X-OTX-API-KEY': otxKey },
+            params: { q: brand, limit: 20 },
+            timeout: 10000
+          });
+          (response.data.results || []).forEach(pulse => results.push({
+            provider: 'AlienVault OTX',
+            type: 'Threat Intel Brand Mention',
+            title: pulse.name || `OTX pulse for ${brand}`,
+            severity: pulse.indicator_count > 10 ? 'High' : 'Medium',
+            date: pulse.modified || pulse.created,
+            url: pulse.id ? `https://otx.alienvault.com/pulse/${pulse.id}` : 'https://otx.alienvault.com/',
+            description: pulse.description || ''
+          }));
+        } catch (err) {
+          results.push({ provider: 'AlienVault OTX', type: 'Provider Error', severity: 'Low', title: err.message });
+        }
+      }
+
+      if (vtKey && normalizedDomain) {
+        try {
+          const response = await axios.get(`https://www.virustotal.com/api/v3/domains/${encodeURIComponent(normalizedDomain)}`, {
+            headers: { 'x-apikey': vtKey },
+            timeout: 10000
+          });
+          const attrs = response.data.data && response.data.data.attributes;
+          if (attrs) {
+            const malicious = attrs.last_analysis_stats && attrs.last_analysis_stats.malicious;
+            results.push({
+              provider: 'VirusTotal Community',
+              type: 'Domain Reputation',
+              title: `${normalizedDomain} reputation: ${malicious || 0} malicious engine(s)`,
+              severity: malicious > 0 ? 'High' : 'Low',
+              date: attrs.last_modification_date ? new Date(attrs.last_modification_date * 1000).toISOString() : undefined,
+              url: `https://www.virustotal.com/gui/domain/${encodeURIComponent(normalizedDomain)}`,
+              description: attrs.reputation !== undefined ? `Reputation: ${attrs.reputation}` : ''
+            });
+          }
+        } catch (err) {
+          results.push({ provider: 'VirusTotal Community', type: 'Provider Error', severity: 'Low', title: err.message });
         }
       }
 
@@ -181,8 +298,8 @@ module.exports = function createOsintRouter(db) {
             brand,
             results: uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`),
             notes: [
-              'Certificate Transparency lookup is available for domains.',
-              'Recommended phishing/typosquatting APIs: URLScan, DNSTwist, SecurityTrails, Silent Push, SOCRadar, or Bolster.'
+              'Free/community coverage uses crt.sh, URLScan.io, AlienVault OTX, and VirusTotal Community.',
+              'Use URLSCAN_API_KEY, OTX_API_KEY, and VIRUSTOTAL_API_KEY in Settings for richer brand exposure data.'
             ]
           });
         }

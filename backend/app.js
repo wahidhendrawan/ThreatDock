@@ -132,7 +132,10 @@ db.serialize(() => {
         ['ANALYST_MFA_REQUIRED', 'false'],
         ['SECURITYTRAILS_API_KEY', process.env.SECURITYTRAILS_API_KEY || ''],
         ['HIBP_API_KEY', process.env.HIBP_API_KEY || ''],
-        ['INTELX_API_KEY', process.env.INTELX_API_KEY || '']
+        ['INTELX_API_KEY', process.env.INTELX_API_KEY || ''],
+        ['OTX_API_KEY', process.env.OTX_API_KEY || ''],
+        ['URLSCAN_API_KEY', process.env.URLSCAN_API_KEY || ''],
+        ['VIRUSTOTAL_API_KEY', process.env.VIRUSTOTAL_API_KEY || '']
       ];
       const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
       defaultSettings.forEach(s => stmt.run(s[0], s[1]));
@@ -143,6 +146,9 @@ db.serialize(() => {
       ensureSetting('SECURITYTRAILS_API_KEY', process.env.SECURITYTRAILS_API_KEY || '');
       ensureSetting('HIBP_API_KEY', process.env.HIBP_API_KEY || '');
       ensureSetting('INTELX_API_KEY', process.env.INTELX_API_KEY || '');
+      ensureSetting('OTX_API_KEY', process.env.OTX_API_KEY || '');
+      ensureSetting('URLSCAN_API_KEY', process.env.URLSCAN_API_KEY || '');
+      ensureSetting('VIRUSTOTAL_API_KEY', process.env.VIRUSTOTAL_API_KEY || '');
     }
   });
 
