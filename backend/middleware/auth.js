@@ -42,8 +42,13 @@ module.exports = async function(req, res, next) {
       if (oidcEnabled) {
         try {
           const decoded = await validateToken(token, settings);
-          req.user = { ...decoded, role: 'Analyst', type: 'sso' }; 
-          return next();
+          const email = decoded.email || decoded.preferred_username || decoded.sub;
+          db.get('SELECT id, username, email, role FROM users WHERE email = ? OR username = ?', [email, decoded.preferred_username || decoded.name || email], (dbErr, userRow) => {
+            if (dbErr || !userRow) return res.status(401).send('Unauthorized SSO user');
+            req.user = { id: userRow.id, name: userRow.username, email: userRow.email, role: userRow.role, type: 'sso' };
+            return next();
+          });
+          return;
         } catch (err) {
           console.error('SSO JWT validation error:', err.message);
         }

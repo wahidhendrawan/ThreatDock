@@ -45,6 +45,33 @@ module.exports = function(db) {
     );
   });
 
+
+  // PATCH /api/users/:id
+  router.patch('/:id', requireAdmin, (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const { username, email, role } = req.body;
+
+    if (!username || username.trim() === '') return res.status(400).json({ error: 'Username is required' });
+    if (!['Admin', 'Analyst'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+
+    db.get('SELECT id FROM users WHERE id = ?', [id], (findErr, user) => {
+      if (findErr) return res.status(500).json({ error: 'Database error' });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      db.run(
+        'UPDATE users SET username = ?, email = ?, role = ? WHERE id = ?',
+        [username.trim(), email || null, role, id],
+        function(updateErr) {
+          if (updateErr) {
+            if (updateErr.message.includes('UNIQUE')) return res.status(400).json({ error: 'Username already exists' });
+            return res.status(500).json({ error: 'Database error' });
+          }
+          res.json({ success: true, id, username: username.trim(), email: email || null, role });
+        }
+      );
+    });
+  });
+
   // DELETE /api/users/:id
   router.delete('/:id', requireAdmin, (req, res) => {
     const id = req.params.id;
