@@ -460,10 +460,10 @@ function AppContent() {
         <Route path="/hunting" element={<ThreatHunting authData={authData} />} />
         <Route path="/assets" element={<AssetDiscovery authData={authData} />} />
         <Route path="/exposure" element={<ExposureMonitoring alerts={filteredAlerts} />} />
-        <Route path="/intel" element={<AssetIntelligence alerts={filteredAlerts} />} />
-        <Route path="/prioritization" element={<VulnPrioritization alerts={filteredAlerts} />} />
+        <Route path="/intel" element={<AssetIntelligence alerts={filteredAlerts} authData={authData} />} />
+        <Route path="/prioritization" element={<VulnPrioritization alerts={filteredAlerts} authData={authData} />} />
         <Route path="/predictive" element={<PredictiveIntel alerts={filteredAlerts} />} />
-        <Route path="/analysis" element={<ThreatAnalysis alerts={filteredAlerts} />} />
+        <Route path="/analysis" element={<ThreatAnalysis alerts={filteredAlerts} authData={authData} />} />
         <Route path="/digital-risk" element={<DigitalRisk alerts={filteredAlerts} authData={authData} />} />
         <Route path="/brand" element={<BrandExposure alerts={filteredAlerts} authData={authData} />} />
         <Route path="/third-party" element={<ThirdPartyRisk authData={authData} />} />

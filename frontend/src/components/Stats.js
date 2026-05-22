@@ -12,6 +12,24 @@ import {
   Cell
 } from 'recharts';
 
+function SeverityTooltip({ active, payload, label }) {
+  if (!active || !payload || payload.length === 0) return null;
+  const value = payload[0]?.value ?? 0;
+  return (
+    <div style={{
+      backgroundColor: '#0f172a',
+      border: '1px solid rgba(255, 255, 255, 0.08)',
+      borderRadius: '8px',
+      color: '#f8fafc',
+      fontSize: '12px',
+      padding: '0.625rem 0.75rem'
+    }}>
+      <div style={{ color: '#94a3b8', marginBottom: '0.25rem' }}>Severity: {label}</div>
+      <div style={{ fontWeight: 700 }}>Total Alerts: {value}</div>
+    </div>
+  );
+}
+
 function Stats({ alerts }) {
   const normalizeSeverity = (value) => {
     const v = String(value || '').toLowerCase();
@@ -98,6 +116,12 @@ function Stats({ alerts }) {
             {statusCounts['Open'] + statusCounts['In Progress']}
           </div>
         </div>
+        <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #8b5cf6' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase' }}>In Progress</div>
+          <div style={{ fontSize: '2rem', fontWeight: '800', marginTop: '0.25rem', color: '#a78bfa' }}>
+            {statusCounts['In Progress']}
+          </div>
+        </div>
         <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #10b981' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Resolved Cases</div>
           <div style={{ fontSize: '2rem', fontWeight: '800', marginTop: '0.25rem', color: '#34d399' }}>
@@ -118,17 +142,9 @@ function Stats({ alerts }) {
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255, 255, 255, 0.05)" />
                   <XAxis dataKey="severity" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 500}} />
                   <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} />
-                  <Tooltip 
-                    formatter={(value) => [value, 'Total Alerts']}
-                    labelFormatter={(label) => `Severity: ${label}`}
+                  <Tooltip
+                    content={<SeverityTooltip />}
                     cursor={{fill: 'rgba(255, 255, 255, 0.02)'}} 
-                    contentStyle={{
-                      backgroundColor: '#0f172a', 
-                      borderColor: 'rgba(255, 255, 255, 0.08)',
-                      borderRadius: '8px',
-                      color: '#f8fafc',
-                      fontSize: '12px'
-                    }} 
                   />
                   <Bar 
                     dataKey="count" 

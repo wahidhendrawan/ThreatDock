@@ -34,6 +34,22 @@ function PaginatedTable({ items, headers, renderRow, initialPageSize = 100 }) {
   );
 }
 
+function severityRank(severity) {
+  return { Critical: 4, High: 3, Medium: 2, Low: 1, Unknown: 0 }[severity || 'Unknown'] || 0;
+}
+
+function normalizeSeverity(score) {
+  if (score >= 85) return 'Critical';
+  if (score >= 60) return 'High';
+  if (score >= 30) return 'Medium';
+  return 'Low';
+}
+
+function matchesAsset(alert, asset) {
+  const haystack = `${alert.title || ''} ${alert.externalId || ''} ${alert.url || ''}`.toLowerCase();
+  return [asset.domain, asset.ip, asset.service].filter(Boolean).some(value => haystack.includes(String(value).toLowerCase()));
+}
+
 // ============ Threat Hunting ============
 export function ThreatHunting({ authData }) {
   const [query, setQuery] = useState('');
@@ -204,20 +220,27 @@ export function AssetDiscovery({ authData }) {
           <div style={{ marginTop: '1rem', color: scanResult.error ? 'var(--danger)' : 'var(--text-muted)', fontSize: '0.875rem' }}>
             {scanResult.error ? scanResult.error : (
               <>
-                <div>IPs: {(scanResult.ips || []).join(', ') || '-'}</div>
-                <div>Open ports: {(scanResult.openPorts || []).join(', ') || '-'}</div>
-                <div>Saved assets: {(scanResult.saved || []).length}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                  <Globe size={14} style={{ color: 'var(--primary-color)' }} />
+                  <strong style={{ color: 'var(--text-main)' }}>DNS Resolver (Public):</strong> {(scanResult.dnsServers || []).join(', ') || '1.1.1.1, 8.8.8.8'}
+                </div>
+                <div>IPs Resolved: {(scanResult.ips || []).join(', ') || '-'}</div>
+                <div>Open Ports: {(scanResult.openPorts || []).join(', ') || '-'}</div>
+                <div>Saved Assets: {(scanResult.saved || []).length}</div>
                 {(scanResult.enrichments || []).length > 0 && (
                   <div style={{ marginTop: '0.75rem' }}>
+                    <strong style={{ color: 'var(--text-main)' }}>Enrichment Results:</strong>
                     {(scanResult.enrichments || []).map((item, index) => (
-                      <div key={`${item.provider}-${index}`}>
-                        {item.provider}: {item.error ? item.error : `${item.count || 0} ${item.type || 'result'} found`}
+                      <div key={`${item.provider}-${index}`} style={{ marginLeft: '0.5rem' }}>
+                        • {item.provider}: {item.error ? <span style={{ color: 'var(--danger)' }}>{item.error}</span> : `${item.count || 0} ${item.type || 'result'} found`}
                       </div>
                     ))}
                   </div>
                 )}
                 {(scanResult.recommendations || []).length > 0 && (
-                  <div style={{ marginTop: '0.75rem' }}>{scanResult.recommendations.join(' ')}</div>
+                  <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: '6px', background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.15)' }}>
+                    {scanResult.recommendations.join(' ')}
+                  </div>
                 )}
               </>
             )}
@@ -344,66 +367,319 @@ export function ExposureMonitoring({ alerts }) {
 }
 
 // ============ Asset Intelligence ============
-export function AssetIntelligence({ alerts }) {
-  const recentCritical = useMemo(() => {
-    return alerts
-      .filter(a => a.severity === 'Critical' || a.severity === 'High')
-      .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
-      .slice(0, 20);
-  }, [alerts]);
+export function AssetIntelligence({ alerts, authData }) {
+  const [assets, setAssets] = useState([]);
+  const [findings, setFindings] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [expandedId, setExpandedId] = useState(null);
+
+  useEffect(() => {
+    const headers = getAuthHeaders(authData);
+    fetch('/api/assets', { headers }).then(res => res.ok ? res.json() : []).then(setAssets).catch(console.error);
+    fetch('/api/osint/findings', { headers }).then(res => res.ok ? res.json() : []).then(setFindings).catch(console.error);
+    fetch('/api/vendors', { headers }).then(res => res.ok ? res.json() : []).then(setVendors).catch(console.error);
+  }, [authData]);
+
+  const assetContext = useMemo(() => {
+    return assets.map(asset => {
+      const relatedAlerts = alerts.filter(alert => matchesAsset(alert, asset));
+      const relatedFindings = findings.filter(finding => {
+        const haystack = `${finding.keyword || ''} ${finding.title || ''} ${finding.description || ''}`.toLowerCase();
+        return [asset.domain, asset.ip].filter(Boolean).some(value => haystack.includes(String(value).toLowerCase()));
+      });
+
+      // Categorize alerts by type
+      const cveAlerts = relatedAlerts.filter(a => (a.source === 'NVD' || a.source === 'GitHub' || a.source === 'Red Hat'));
+      const iocAlerts = relatedAlerts.filter(a => (a.source === 'ThreatFox' || a.source === 'OTX'));
+      const otherAlerts = relatedAlerts.filter(a => !['NVD', 'GitHub', 'Red Hat', 'ThreatFox', 'OTX'].includes(a.source));
+
+      // Find related vendors
+      const relatedVendors = vendors.filter(v => {
+        const assetStr = `${asset.domain || ''} ${asset.service || ''} ${asset.notes || ''}`.toLowerCase();
+        return assetStr.includes(v.name.toLowerCase());
+      });
+
+      // Enriched score calculation
+      const cveWeight = cveAlerts.reduce((sum, a) => sum + severityRank(a.severity) * 10, 0);
+      const iocWeight = iocAlerts.length * 15;
+      const findingWeight = relatedFindings.length * 5;
+      const vendorRisk = relatedVendors.reduce((sum, v) => sum + (v.risk_score || 0), 0) / Math.max(relatedVendors.length, 1);
+      const portRisk = asset.port && ![80, 443].includes(asset.port) ? 10 : 0;
+      const score = Math.min(100, (asset.risk_score || 0) + cveWeight + iocWeight + findingWeight + portRisk + Math.round(vendorRisk / 5));
+
+      // Generate recommendations
+      const recommendations = [];
+      if (cveAlerts.filter(a => severityRank(a.severity) >= 3).length > 0) recommendations.push('Patch critical/high CVEs immediately');
+      if (iocAlerts.length > 0) recommendations.push('Investigate active IOC matches');
+      if (asset.port && ![80, 443].includes(asset.port)) recommendations.push(`Review non-standard port ${asset.port}`);
+      if (relatedFindings.filter(f => f.category === 'digital-risk').length > 0) recommendations.push('Check digital risk exposure findings');
+      if (recommendations.length === 0) recommendations.push('Continue monitoring');
+
+      return {
+        asset, relatedAlerts, relatedFindings, relatedVendors,
+        cveAlerts, iocAlerts, otherAlerts,
+        score, severity: normalizeSeverity(score),
+        recommendations
+      };
+    }).sort((a, b) => b.score - a.score);
+  }, [assets, alerts, findings, vendors]);
+
+  const summaryStats = useMemo(() => {
+    const total = assetContext.length;
+    const critical = assetContext.filter(a => a.severity === 'Critical').length;
+    const high = assetContext.filter(a => a.severity === 'High').length;
+    const withCve = assetContext.filter(a => a.cveAlerts.length > 0).length;
+    const withIoc = assetContext.filter(a => a.iocAlerts.length > 0).length;
+    return { total, critical, high, withCve, withIoc };
+  }, [assetContext]);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
         <div>
           <h1 className="page-title">Contextual Asset Intelligence</h1>
-          <p className="page-subtitle">Enriched context for assets including CVE mapping and historical data.</p>
+          <p className="page-subtitle">Enriched asset context with CVE mapping, IOC correlation, vendor risk, and OSINT findings per asset.</p>
         </div>
       </div>
-      <div className="card">
-        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Recent Critical & High Alerts ({recentCritical.length})</h2>
-        <div className="table-container">
-          <table>
-            <thead><tr><th>Source</th><th>ID</th><th>Severity</th><th>Title</th><th>Date</th></tr></thead>
-            <tbody>
-              {recentCritical.map(a => (
-                <tr key={a.id}>
-                  <td style={{ fontWeight: 600, color: 'var(--primary-color)' }}>{a.source}</td>
-                  <td><code style={{ fontSize: '0.8rem' }}>{a.externalId}</code></td>
-                  <td><span className={`severity-badge severity-${a.severity}`}>{a.severity}</span></td>
-                  <td>{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="alert-link">{a.title?.substring(0, 80)}</a> : a.title?.substring(0, 80)}</td>
-                  <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{a.date ? new Date(a.date).toLocaleDateString() : '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+      {/* Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '1rem' }}>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--primary-color)' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Assets</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800 }}>{summaryStats.total}</div>
         </div>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #ef4444' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Critical Risk</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#f87171' }}>{summaryStats.critical}</div>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #f97316' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>High Risk</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#fb923c' }}>{summaryStats.high}</div>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #f59e0b' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>With CVEs</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#fbbf24' }}>{summaryStats.withCve}</div>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #8b5cf6' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>With IOCs</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#a78bfa' }}>{summaryStats.withIoc}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Asset Intelligence Context ({assetContext.length})</h2>
+        {assetContext.length === 0 ? (
+          <p style={{ color: 'var(--text-muted)', padding: '2rem', textAlign: 'center' }}>Add or scan external assets in External Asset Discovery to build contextual intelligence.</p>
+        ) : (
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Asset</th>
+                  <th>IP</th>
+                  <th>Service</th>
+                  <th>Risk Score</th>
+                  <th>CVEs</th>
+                  <th>IOCs</th>
+                  <th>OSINT</th>
+                  <th>Recommendation</th>
+                  <th>Last Seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assetContext.map(item => (
+                  <React.Fragment key={item.asset.id}>
+                    <tr onClick={() => setExpandedId(expandedId === item.asset.id ? null : item.asset.id)} style={{ cursor: 'pointer' }}>
+                      <td style={{ width: '30px' }}>{expandedId === item.asset.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</td>
+                      <td style={{ fontWeight: 600 }}>{item.asset.domain || '-'}</td>
+                      <td><code>{item.asset.ip || '-'}</code></td>
+                      <td>{item.asset.service || '-'}</td>
+                      <td><span className={`severity-badge severity-${item.severity}`}>{item.score}</span></td>
+                      <td style={{ color: item.cveAlerts.length > 0 ? '#f87171' : 'var(--text-muted)' }}>{item.cveAlerts.length}</td>
+                      <td style={{ color: item.iocAlerts.length > 0 ? '#a78bfa' : 'var(--text-muted)' }}>{item.iocAlerts.length}</td>
+                      <td>{item.relatedFindings.length}</td>
+                      <td style={{ fontSize: '0.8rem' }}>{item.recommendations[0]}</td>
+                      <td style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{item.asset.last_seen ? new Date(item.asset.last_seen).toLocaleString() : '-'}</td>
+                    </tr>
+                    {expandedId === item.asset.id && (
+                      <tr>
+                        <td colSpan="10" style={{ padding: '1rem 1.5rem', background: 'rgba(99, 102, 241, 0.03)' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                            {/* CVE Details */}
+                            <div>
+                              <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>CVE / Vulnerability Alerts ({item.cveAlerts.length})</h4>
+                              {item.cveAlerts.length === 0 ? <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No CVEs mapped</p> : (
+                                item.cveAlerts.slice(0, 5).map(a => (
+                                  <div key={a.id} style={{ fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                                    <span className={`severity-badge severity-${a.severity}`} style={{ fontSize: '0.65rem', marginRight: '0.5rem' }}>{a.severity}</span>
+                                    {a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="alert-link">{a.externalId || a.title?.substring(0, 60)}</a> : (a.externalId || a.title?.substring(0, 60))}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                            {/* IOC Details */}
+                            <div>
+                              <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>IOC Indicators ({item.iocAlerts.length})</h4>
+                              {item.iocAlerts.length === 0 ? <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No IOCs matched</p> : (
+                                item.iocAlerts.slice(0, 5).map(a => (
+                                  <div key={a.id} style={{ fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                                    <span style={{ color: '#a78bfa', fontWeight: 600 }}>{a.source}</span>: {a.title?.substring(0, 60)}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                            {/* OSINT & Vendor */}
+                            <div>
+                              <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>OSINT Findings ({item.relatedFindings.length})</h4>
+                              {item.relatedFindings.length === 0 ? <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No OSINT findings</p> : (
+                                item.relatedFindings.slice(0, 5).map((f, i) => (
+                                  <div key={i} style={{ fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                                    <span style={{ color: 'var(--primary-color)', fontWeight: 600 }}>{f.provider}</span>: {f.title?.substring(0, 60)}
+                                  </div>
+                                ))
+                              )}
+                              {item.relatedVendors.length > 0 && (
+                                <div style={{ marginTop: '0.5rem' }}>
+                                  <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Related Vendors</h4>
+                                  {item.relatedVendors.map(v => (
+                                    <div key={v.id} style={{ fontSize: '0.8rem' }}>• {v.name} (Risk: {v.risk_score})</div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {/* All Recommendations */}
+                          {item.recommendations.length > 1 && (
+                            <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: '6px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.15)', fontSize: '0.8rem' }}>
+                              <strong>Recommendations:</strong> {item.recommendations.join(' • ')}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 // ============ Vulnerability Prioritization ============
-export function VulnPrioritization({ alerts }) {
+export function VulnPrioritization({ alerts, authData }) {
+  const [assets, setAssets] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [findings, setFindings] = useState([]);
+  const [moduleFilter, setModuleFilter] = useState('');
+
+  useEffect(() => {
+    const headers = getAuthHeaders(authData);
+    fetch('/api/assets', { headers }).then(res => res.ok ? res.json() : []).then(setAssets).catch(console.error);
+    fetch('/api/vendors', { headers }).then(res => res.ok ? res.json() : []).then(setVendors).catch(console.error);
+    fetch('/api/osint/findings', { headers }).then(res => res.ok ? res.json() : []).then(setFindings).catch(console.error);
+  }, [authData]);
+
   const prioritized = useMemo(() => {
-    const sevOrder = { 'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Unknown': 4 };
-    return [...alerts]
-      .sort((a, b) => (sevOrder[a.severity] ?? 4) - (sevOrder[b.severity] ?? 4))
-      .slice(0, 50);
-  }, [alerts]);
+    // External Asset Discovery items
+    const assetItems = assets.map(asset => {
+      const relatedAlerts = alerts.filter(alert => matchesAsset(alert, asset));
+      const cveAlerts = relatedAlerts.filter(a => ['NVD', 'GitHub', 'Red Hat'].includes(a.source));
+      const iocAlerts = relatedAlerts.filter(a => ['ThreatFox', 'OTX'].includes(a.source));
+      const maxAlertRisk = relatedAlerts.reduce((max, alert) => Math.max(max, severityRank(alert.severity) * 20), 0);
+      const score = Math.min(100, (asset.risk_score || 0) + maxAlertRisk + relatedAlerts.length * 3 + (iocAlerts.length * 10));
+      const contextParts = [];
+      if (cveAlerts.length > 0) contextParts.push(`${cveAlerts.length} CVE(s)`);
+      if (iocAlerts.length > 0) contextParts.push(`${iocAlerts.length} IOC match(es)`);
+      if (asset.service) contextParts.push(`Service: ${asset.service}`);
+      if (asset.port && ![80, 443].includes(asset.port)) contextParts.push(`Non-std port: ${asset.port}`);
+      return {
+        id: `asset-${asset.id}`,
+        sourceModule: 'External Asset Discovery',
+        type: 'External Asset',
+        name: asset.domain || asset.ip || `Asset #${asset.id}`,
+        severity: normalizeSeverity(score),
+        score,
+        driver: `${relatedAlerts.length} alert(s), service ${asset.service || '-'}`,
+        context: contextParts.join(' • ') || 'No active threats detected',
+        link: null
+      };
+    });
+
+    // Digital Risk & Identity Protection items
+    const digitalRiskFindings = findings.filter(f => f.category === 'digital-risk');
+    const digitalRiskItems = digitalRiskFindings.map(finding => {
+      const sevScore = severityRank(finding.severity) * 25;
+      return {
+        id: `dr-${finding.id}`,
+        sourceModule: 'Digital Risk & Identity Protection',
+        type: 'Digital Risk',
+        name: finding.keyword || finding.title,
+        severity: finding.severity || 'Unknown',
+        score: sevScore,
+        driver: `${finding.provider} - ${finding.type}`,
+        context: finding.description?.substring(0, 80) || finding.type || 'Identity exposure finding',
+        link: finding.url
+      };
+    });
+
+    // Brand & Online Exposure Management items
+    const brandFindings = findings.filter(f => f.category === 'brand-exposure');
+    const brandItems = brandFindings.map(finding => {
+      const sevScore = severityRank(finding.severity) * 25;
+      return {
+        id: `brand-${finding.id}`,
+        sourceModule: 'Brand & Online Exposure',
+        type: 'Brand Exposure',
+        name: finding.keyword || finding.title,
+        severity: finding.severity || 'Unknown',
+        score: sevScore,
+        driver: `${finding.provider} - ${finding.type}`,
+        context: finding.description?.substring(0, 80) || finding.type || 'Brand exposure finding',
+        link: finding.url
+      };
+    });
+
+    // Third-Party Risk Management items
+    const vendorItems = vendors.map(vendor => {
+      const vendorAlerts = alerts.filter(a => `${a.title || ''} ${a.source || ''}`.toLowerCase().includes(vendor.name.toLowerCase()));
+      const vendorFindings = findings.filter(f => `${f.keyword || ''} ${f.title || ''}`.toLowerCase().includes(vendor.name.toLowerCase()));
+      const adjustedScore = Math.min(100, (vendor.risk_score || 0) + vendorAlerts.length * 5 + vendorFindings.length * 3);
+      return {
+        id: `vendor-${vendor.id}`,
+        sourceModule: 'Third-Party Risk Management',
+        type: 'Third Party',
+        name: vendor.name,
+        severity: normalizeSeverity(adjustedScore),
+        score: adjustedScore,
+        driver: vendor.notes || 'Vendor assessment score',
+        context: `${vendorAlerts.length} alert(s), ${vendorFindings.length} OSINT finding(s), category: ${vendor.category || '-'}`,
+        link: null
+      };
+    });
+
+    const all = [...assetItems, ...digitalRiskItems, ...brandItems, ...vendorItems].sort((a, b) => b.score - a.score);
+    if (moduleFilter) return all.filter(item => item.sourceModule === moduleFilter);
+    return all;
+  }, [assets, vendors, findings, alerts, moduleFilter]);
 
   const stats = useMemo(() => {
     const counts = { Critical: 0, High: 0, Medium: 0, Low: 0, Unknown: 0 };
-    alerts.forEach(a => { counts[a.severity || 'Unknown']++; });
+    prioritized.forEach(a => { counts[a.severity || 'Unknown']++; });
     return counts;
-  }, [alerts]);
+  }, [prioritized]);
+
+  const sourceModules = ['External Asset Discovery', 'Digital Risk & Identity Protection', 'Brand & Online Exposure', 'Third-Party Risk Management'];
 
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
         <div>
           <h1 className="page-title">Threat-Based Vulnerability Prioritization</h1>
-          <p className="page-subtitle">Prioritize remediation based on severity and active exploitation intelligence.</p>
+          <p className="page-subtitle">Unified remediation priority from External Asset Discovery, Digital Risk, Brand Exposure, and Third-Party Risk data.</p>
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem' }}>
@@ -415,24 +691,33 @@ export function VulnPrioritization({ alerts }) {
         ))}
       </div>
       <div className="card">
-        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Top 50 Priority Vulnerabilities</h2>
-        <div className="table-container">
-          <table>
-            <thead><tr><th>#</th><th>Source</th><th>ID</th><th>Severity</th><th>Title</th><th>Status</th></tr></thead>
-            <tbody>
-              {prioritized.map((a, i) => (
-                <tr key={a.id}>
-                  <td style={{ fontWeight: 700, color: 'var(--text-muted)' }}>{i + 1}</td>
-                  <td style={{ fontWeight: 600 }}>{a.source}</td>
-                  <td><code style={{ fontSize: '0.8rem' }}>{a.externalId}</code></td>
-                  <td><span className={`severity-badge severity-${a.severity || 'Unknown'}`}>{a.severity}</span></td>
-                  <td>{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="alert-link">{a.title?.substring(0, 70)}</a> : a.title?.substring(0, 70)}</td>
-                  <td>{a.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+          <h2 className="section-title" style={{ fontSize: '1rem', margin: 0 }}>Unified Risk Prioritization ({prioritized.length})</h2>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button className={`btn ${!moduleFilter ? 'btn-primary' : 'btn-outline'}`} onClick={() => setModuleFilter('')} style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}>All</button>
+            {sourceModules.map(mod => (
+              <button key={mod} className={`btn ${moduleFilter === mod ? 'btn-primary' : 'btn-outline'}`} onClick={() => setModuleFilter(moduleFilter === mod ? '' : mod)} style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}>
+                {mod.split(' ').slice(0, 2).join(' ')}
+              </button>
+            ))}
+          </div>
         </div>
+        <PaginatedTable
+          items={prioritized}
+          headers={['#', 'Source Module', 'Type', 'Asset / Entity', 'Severity', 'Score', 'Context', 'Link']}
+          renderRow={(item, i) => (
+            <tr key={item.id}>
+              <td style={{ fontWeight: 700, color: 'var(--text-muted)' }}>{i + 1}</td>
+              <td style={{ fontSize: '0.75rem', color: 'var(--primary-color)', fontWeight: 600 }}>{item.sourceModule.split(' ').slice(0, 2).join(' ')}</td>
+              <td>{item.type}</td>
+              <td style={{ fontWeight: 600 }}>{item.name}</td>
+              <td><span className={`severity-badge severity-${item.severity || 'Unknown'}`}>{item.severity}</span></td>
+              <td>{item.score}</td>
+              <td style={{ fontSize: '0.8rem', maxWidth: '250px' }}>{item.context}</td>
+              <td>{item.link ? <a href={item.link} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /></a> : '-'}</td>
+            </tr>
+          )}
+        />
       </div>
     </div>
   );
@@ -493,39 +778,195 @@ export function PredictiveIntel({ alerts }) {
 }
 
 // ============ Threat Analysis ============
-export function ThreatAnalysis({ alerts }) {
+export function ThreatAnalysis({ alerts, authData }) {
+  const [assets, setAssets] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [findings, setFindings] = useState([]);
+
+  useEffect(() => {
+    const headers = getAuthHeaders(authData);
+    fetch('/api/assets', { headers }).then(res => res.ok ? res.json() : []).then(setAssets).catch(console.error);
+    fetch('/api/vendors', { headers }).then(res => res.ok ? res.json() : []).then(setVendors).catch(console.error);
+    fetch('/api/osint/findings', { headers }).then(res => res.ok ? res.json() : []).then(setFindings).catch(console.error);
+  }, [authData]);
+
   const phaseData = useMemo(() => {
     const byPhase = {};
     alerts.forEach(a => {
       const phase = a.attack_phase || 'Unknown';
-      if (!byPhase[phase]) byPhase[phase] = { total: 0, critical: 0, high: 0 };
+      if (!byPhase[phase]) byPhase[phase] = { total: 0, critical: 0, high: 0, medium: 0, low: 0 };
       byPhase[phase].total++;
       if (a.severity === 'Critical') byPhase[phase].critical++;
-      if (a.severity === 'High') byPhase[phase].high++;
+      else if (a.severity === 'High') byPhase[phase].high++;
+      else if (a.severity === 'Medium') byPhase[phase].medium++;
+      else byPhase[phase].low++;
     });
     return Object.entries(byPhase).sort((a, b) => b[1].total - a[1].total);
   }, [alerts]);
+
+  const totalAlerts = alerts.length || 1;
+
+  const correlations = useMemo(() => {
+    const assetCorrelations = assets.map(asset => {
+      const relAlerts = alerts.filter(alert => matchesAsset(alert, asset));
+      const cveAlerts = relAlerts.filter(a => ['NVD', 'GitHub', 'Red Hat'].includes(a.source));
+      const iocAlerts = relAlerts.filter(a => ['ThreatFox', 'OTX'].includes(a.source));
+      const relFindings = findings.filter(finding => {
+        const haystack = `${finding.keyword || ''} ${finding.title || ''} ${finding.description || ''}`.toLowerCase();
+        return [asset.domain, asset.ip].filter(Boolean).some(v => haystack.includes(String(v).toLowerCase()));
+      });
+      const riskScore = Math.min(100, (asset.risk_score || 0) + cveAlerts.reduce((s, a) => s + severityRank(a.severity) * 10, 0) + iocAlerts.length * 15 + relFindings.length * 5);
+
+      // Contextual recommended action
+      let action = 'Continue monitoring';
+      if (iocAlerts.length > 0) action = `Investigate ${iocAlerts.length} active IOC(s) on ${asset.service || 'service'}`;
+      else if (cveAlerts.filter(a => severityRank(a.severity) >= 3).length > 0) action = `Patch ${cveAlerts.filter(a => severityRank(a.severity) >= 3).length} critical/high CVE(s)`;
+      else if (asset.port && ![80, 443].includes(asset.port)) action = `Review non-standard port ${asset.port} exposure`;
+      else if (relFindings.length > 0) action = `Review ${relFindings.length} OSINT finding(s)`;
+      else if (asset.service) action = `Review exposed ${asset.service} service`;
+
+      return {
+        id: `asset-${asset.id}`,
+        entity: asset.domain || asset.ip || `Asset #${asset.id}`,
+        type: 'External Asset',
+        alertCount: relAlerts.length,
+        cveCount: cveAlerts.length,
+        iocCount: iocAlerts.length,
+        findingCount: relFindings.length,
+        risk: riskScore,
+        severity: normalizeSeverity(riskScore),
+        action,
+        topThreats: relAlerts.slice(0, 3).map(a => ({ source: a.source, severity: a.severity, title: a.externalId || a.title?.substring(0, 40) }))
+      };
+    });
+
+    const vendorCorrelations = vendors.map(vendor => {
+      const vendorAlerts = alerts.filter(alert => `${alert.title || ''} ${alert.source || ''}`.toLowerCase().includes(vendor.name.toLowerCase()));
+      const vendorFindings = findings.filter(finding => `${finding.keyword || ''} ${finding.title || ''}`.toLowerCase().includes(vendor.name.toLowerCase()));
+      const riskScore = Math.min(100, (vendor.risk_score || 0) + vendorAlerts.length * 5 + vendorFindings.length * 3);
+
+      let action = 'Review vendor exposure and remediation status';
+      if (vendorAlerts.filter(a => severityRank(a.severity) >= 3).length > 0) action = `Escalate: ${vendorAlerts.filter(a => severityRank(a.severity) >= 3).length} critical/high alert(s) linked to ${vendor.name}`;
+      else if (vendorFindings.length > 0) action = `Review ${vendorFindings.length} OSINT finding(s) for ${vendor.name}`;
+
+      return {
+        id: `vendor-${vendor.id}`,
+        entity: vendor.name,
+        type: 'Third Party',
+        alertCount: vendorAlerts.length,
+        cveCount: vendorAlerts.filter(a => ['NVD', 'GitHub', 'Red Hat'].includes(a.source)).length,
+        iocCount: vendorAlerts.filter(a => ['ThreatFox', 'OTX'].includes(a.source)).length,
+        findingCount: vendorFindings.length,
+        risk: riskScore,
+        severity: normalizeSeverity(riskScore),
+        action,
+        topThreats: vendorAlerts.slice(0, 3).map(a => ({ source: a.source, severity: a.severity, title: a.externalId || a.title?.substring(0, 40) }))
+      };
+    });
+
+    return [...assetCorrelations, ...vendorCorrelations]
+      .filter(c => c.alertCount > 0 || c.findingCount > 0 || c.risk > 0)
+      .sort((a, b) => b.risk - a.risk);
+  }, [assets, vendors, findings, alerts]);
+
+  const summaryStats = useMemo(() => ({
+    totalEntities: correlations.length,
+    highRisk: correlations.filter(c => c.severity === 'Critical' || c.severity === 'High').length,
+    avgRisk: correlations.length > 0 ? Math.round(correlations.reduce((s, c) => s + c.risk, 0) / correlations.length) : 0,
+    totalIocs: correlations.reduce((s, c) => s + c.iocCount, 0),
+    totalCves: correlations.reduce((s, c) => s + c.cveCount, 0)
+  }), [correlations]);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
         <div>
           <h1 className="page-title">Context-Rich Threat Analysis</h1>
-          <p className="page-subtitle">Deep dive into alerts with MITRE ATT&CK mapping and IOC correlation.</p>
+          <p className="page-subtitle">Deep correlation of alerts, IOCs, and OSINT findings per entity with MITRE ATT&CK mapping.</p>
         </div>
       </div>
+
+      {/* Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '1rem' }}>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--primary-color)' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Entities Analyzed</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800 }}>{summaryStats.totalEntities}</div>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #ef4444' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>High-Risk Entities</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#f87171' }}>{summaryStats.highRisk}</div>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #f59e0b' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Avg Risk Score</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#fbbf24' }}>{summaryStats.avgRisk}</div>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #8b5cf6' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>IOC Matches</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#a78bfa' }}>{summaryStats.totalIocs}</div>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #f97316' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>CVE Correlations</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#fb923c' }}>{summaryStats.totalCves}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Entity Threat Correlation</h2>
+        {correlations.length === 0 ? (
+          <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>Add assets, vendors, and run OSINT searches to build contextual threat analysis.</p>
+        ) : (
+          <PaginatedTable
+            items={correlations}
+            headers={['Entity', 'Type', 'Risk', 'Alerts', 'CVEs', 'IOCs', 'OSINT', 'Top Threats', 'Recommended Action']}
+            renderRow={(row) => (
+              <tr key={row.id}>
+                <td style={{ fontWeight: 600 }}>{row.entity}</td>
+                <td>{row.type}</td>
+                <td><span className={`severity-badge severity-${row.severity}`}>{row.risk}</span></td>
+                <td>{row.alertCount}</td>
+                <td style={{ color: row.cveCount > 0 ? '#f87171' : 'var(--text-muted)' }}>{row.cveCount}</td>
+                <td style={{ color: row.iocCount > 0 ? '#a78bfa' : 'var(--text-muted)' }}>{row.iocCount}</td>
+                <td>{row.findingCount}</td>
+                <td style={{ fontSize: '0.75rem', maxWidth: '180px' }}>
+                  {row.topThreats.length > 0 ? row.topThreats.map((t, i) => (
+                    <div key={i}><span className={`severity-badge severity-${t.severity}`} style={{ fontSize: '0.6rem', marginRight: '0.25rem' }}>{t.severity?.charAt(0)}</span>{t.title}</div>
+                  )) : <span style={{ color: 'var(--text-muted)' }}>-</span>}
+                </td>
+                <td style={{ fontSize: '0.8rem' }}>{row.action}</td>
+              </tr>
+            )}
+          />
+        )}
+      </div>
+
       <div className="card">
         <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>MITRE ATT&CK Phase Distribution</h2>
         <div className="table-container">
           <table>
-            <thead><tr><th>Attack Phase</th><th>Total</th><th>Critical</th><th>High</th></tr></thead>
+            <thead><tr><th>Attack Phase</th><th>Total</th><th style={{ width: '40%' }}>Distribution</th><th>Critical</th><th>High</th><th>Medium</th></tr></thead>
             <tbody>
               {phaseData.map(([phase, data]) => (
                 <tr key={phase}>
                   <td style={{ fontWeight: 600 }}>{phase}</td>
                   <td>{data.total}</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div style={{ flex: 1, background: 'rgba(255,255,255,0.05)', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
+                        <div style={{
+                          display: 'flex', height: '100%',
+                        }}>
+                          {data.critical > 0 && <div style={{ width: `${(data.critical / data.total) * 100}%`, background: '#ef4444' }} />}
+                          {data.high > 0 && <div style={{ width: `${(data.high / data.total) * 100}%`, background: '#f97316' }} />}
+                          {data.medium > 0 && <div style={{ width: `${(data.medium / data.total) * 100}%`, background: '#f59e0b' }} />}
+                          {data.low > 0 && <div style={{ width: `${(data.low / data.total) * 100}%`, background: '#3b82f6' }} />}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{Math.round((data.total / totalAlerts) * 100)}%</span>
+                    </div>
+                  </td>
                   <td style={{ color: '#f87171' }}>{data.critical}</td>
                   <td style={{ color: '#fb923c' }}>{data.high}</td>
+                  <td style={{ color: '#fbbf24' }}>{data.medium}</td>
                 </tr>
               ))}
             </tbody>
