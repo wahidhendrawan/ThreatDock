@@ -1,6 +1,9 @@
 import React from 'react';
+import PaginationControls, { usePagination } from './PaginationControls';
 
 function AlertList({ alerts, onStatusChange }) {
+  const pagination = usePagination(alerts || [], 100);
+
   const formatDate = (dateStr) => {
     if (!dateStr) return 'N/A';
     const d = new Date(dateStr);
@@ -33,7 +36,7 @@ function AlertList({ alerts, onStatusChange }) {
           </tr>
         </thead>
         <tbody>
-          {alerts.slice(0, 50).map(alert => (
+          {pagination.pagedItems.map(alert => (
             <tr key={alert.id || `${alert.source}-${alert.externalId}`}>
               <td style={{ fontWeight: '600', color: 'var(--primary-color)' }}>{alert.source}</td>
               <td>
@@ -82,6 +85,7 @@ function AlertList({ alerts, onStatusChange }) {
           ))}
         </tbody>
       </table>
+      <PaginationControls pagination={pagination} />
     </div>
   );
 }

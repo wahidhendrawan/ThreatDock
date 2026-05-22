@@ -10,7 +10,7 @@ module.exports = function createAlertsRouter(db) {
 
   // GET /alerts - return all alerts with optional filters
   router.get('/', (req, res) => {
-    const { severity, source, start, end, status } = req.query;
+    const { severity, source, start, end, status, search } = req.query;
     let query = 'SELECT * FROM alerts';
     const conditions = [];
     const params = [];
@@ -34,6 +34,11 @@ module.exports = function createAlertsRouter(db) {
     if (status) {
       conditions.push('status = ?');
       params.push(status);
+    }
+    if (search) {
+      conditions.push('(title LIKE ? OR externalId LIKE ? OR source LIKE ?)');
+      const value = `%${search}%`;
+      params.push(value, value, value);
     }
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');

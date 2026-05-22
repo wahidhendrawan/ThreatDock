@@ -113,6 +113,13 @@ db.serialize(() => {
 // Seed default settings and user if they don't exist
 db.serialize(() => {
   db.get("SELECT COUNT(*) AS count FROM settings", (err, row) => {
+    const ensureSetting = (key, value) => {
+      db.run(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        [key, value]
+      );
+    };
+
     if (!err && row.count === 0) {
       const defaultSettings = [
         ['OIDC_ISSUER_URL', process.env.OIDC_ISSUER_URL || ''],
@@ -122,11 +129,20 @@ db.serialize(() => {
         ['JWT_SECRET', process.env.JWT_SECRET || 'super_secret_threatdock_jwt_key_12345'],
         ['SSO_ENABLED', process.env.OIDC_ISSUER_URL ? 'true' : 'false'],
         ['MFA_REQUIRED', 'false'],
-        ['ANALYST_MFA_REQUIRED', 'false']
+        ['ANALYST_MFA_REQUIRED', 'false'],
+        ['SECURITYTRAILS_API_KEY', process.env.SECURITYTRAILS_API_KEY || ''],
+        ['HIBP_API_KEY', process.env.HIBP_API_KEY || ''],
+        ['INTELX_API_KEY', process.env.INTELX_API_KEY || '']
       ];
       const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
       defaultSettings.forEach(s => stmt.run(s[0], s[1]));
       stmt.finalize();
+    } else if (!err) {
+      ensureSetting('MFA_REQUIRED', 'false');
+      ensureSetting('ANALYST_MFA_REQUIRED', 'false');
+      ensureSetting('SECURITYTRAILS_API_KEY', process.env.SECURITYTRAILS_API_KEY || '');
+      ensureSetting('HIBP_API_KEY', process.env.HIBP_API_KEY || '');
+      ensureSetting('INTELX_API_KEY', process.env.INTELX_API_KEY || '');
     }
   });
 
@@ -410,6 +426,9 @@ app.use('/api/vendors', authMiddleware, vendorsRouter);
 
 const huntRouter = require('./routes/threatHunting')(db);
 app.use('/api/hunt', authMiddleware, huntRouter);
+
+const osintRouter = require('./routes/osint')(db);
+app.use('/api/osint', authMiddleware, osintRouter);
 
 const usersRouter = require('./routes/users')(db);
 app.use('/api/users', authMiddleware, usersRouter);

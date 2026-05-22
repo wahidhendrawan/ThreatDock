@@ -6,20 +6,20 @@ export default function Settings({ authData }) {
   const [settings, setSettings] = useState(null);
   const [users, setUsers] = useState([]);
   const [userEdits, setUserEdits] = useState({});
-  
+
   // New User Form
   const [newUser, setNewUser] = useState({ username: '', password: '', email: '', role: 'Analyst' });
 
   // Notifications
   const [msg, setMsg] = useState({ text: '', type: '' });
-  
+
   // MFA Setup
   const [mfaSetupData, setMfaSetupData] = useState(null);
   const [mfaCode, setMfaCode] = useState('');
 
-  const headers = { 
+  const headers = {
     'Content-Type': 'application/json',
-    ...(authData?.token ? { 'Authorization': `Bearer ${authData.token}` } : 
+    ...(authData?.token ? { 'Authorization': `Bearer ${authData.token}` } :
         authData?.basic ? { 'Authorization': `Basic ${btoa(authData.basic.user + ':' + authData.basic.pass)}` } : {})
   };
 
@@ -165,12 +165,32 @@ export default function Settings({ authData }) {
         setMsg({ text: 'MFA Enabled Successfully', type: 'success' });
         setMfaSetupData(null);
         setMfaCode('');
+        fetchUsers();
       } else {
         const err = await res.json();
         setMsg({ text: `Verification failed: ${err.error}`, type: 'error' });
       }
     } catch (e) {
       setMsg({ text: 'Network error.', type: 'error' });
+    }
+  };
+
+  const handleDeleteMfa = async (userId) => {
+    if (!window.confirm('Delete MFA setup for this user? They will need to enroll again if MFA is required.')) return;
+    try {
+      const res = await fetch(`${API_BASE}/users/${userId}/mfa`, {
+        method: 'DELETE',
+        headers
+      });
+      if (res.ok) {
+        setMsg({ text: 'MFA setup deleted', type: 'success' });
+        fetchUsers();
+      } else {
+        const err = await res.json();
+        setMsg({ text: `Failed to delete MFA: ${err.error}`, type: 'error' });
+      }
+    } catch (e) {
+      setMsg({ text: 'Network error deleting MFA.', type: 'error' });
     }
   };
 
@@ -186,8 +206,8 @@ export default function Settings({ authData }) {
       </div>
 
       {msg.text && (
-        <div style={{ padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px', 
-                     backgroundColor: msg.type === 'error' ? 'var(--danger)' : 'var(--success)', 
+        <div style={{ padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px',
+                     backgroundColor: msg.type === 'error' ? 'var(--danger)' : 'var(--success)',
                      color: '#fff', opacity: 0.9 }}>
           {msg.text}
         </div>
@@ -195,14 +215,14 @@ export default function Settings({ authData }) {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-        <button 
+        <button
           className={`btn ${activeTab === 'sso' ? 'btn-primary' : 'btn-outline'}`}
           onClick={() => setActiveTab('sso')}
           style={{ border: 'none', background: activeTab === 'sso' ? 'var(--primary)' : 'transparent' }}
         >
           Security & SSO
         </button>
-        <button 
+        <button
           className={`btn ${activeTab === 'users' ? 'btn-primary' : 'btn-outline'}`}
           onClick={() => setActiveTab('users')}
           style={{ border: 'none', background: activeTab === 'users' ? 'var(--primary)' : 'transparent' }}
@@ -215,12 +235,12 @@ export default function Settings({ authData }) {
         <div className="card">
           <h2 style={{ marginBottom: '1.5rem' }}>Global Security Configuration</h2>
           <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
-            
+
             <div className="form-group">
               <label className="form-label">Require 2FA (MFA) Globally for Local Users</label>
-              <select 
+              <select
                 className="form-select"
-                value={settings.MFA_REQUIRED || 'true'} 
+                value={settings.MFA_REQUIRED || 'true'}
                 onChange={(e) => setSettings({...settings, MFA_REQUIRED: e.target.value})}
               >
                 <option value="true">Enabled (Mandatory)</option>
@@ -242,9 +262,9 @@ export default function Settings({ authData }) {
 
             <div className="form-group">
               <label className="form-label">Enable Corporate SSO (OIDC)</label>
-              <select 
+              <select
                 className="form-select"
-                value={settings.SSO_ENABLED} 
+                value={settings.SSO_ENABLED}
                 onChange={(e) => setSettings({...settings, SSO_ENABLED: e.target.value})}
               >
                 <option value="true">Enabled</option>
@@ -254,8 +274,8 @@ export default function Settings({ authData }) {
 
             <div className="form-group">
               <label className="form-label">Issuer URL</label>
-              <input 
-                type="url" className="form-input" 
+              <input
+                type="url" className="form-input"
                 value={settings.OIDC_ISSUER_URL || ''}
                 onChange={(e) => setSettings({...settings, OIDC_ISSUER_URL: e.target.value})}
                 placeholder="https://sso.yourdomain.com/application/o/app-name/"
@@ -264,8 +284,8 @@ export default function Settings({ authData }) {
 
             <div className="form-group">
               <label className="form-label">Client ID</label>
-              <input 
-                type="text" className="form-input" 
+              <input
+                type="text" className="form-input"
                 value={settings.OIDC_CLIENT_ID || ''}
                 onChange={(e) => setSettings({...settings, OIDC_CLIENT_ID: e.target.value})}
               />
@@ -273,17 +293,47 @@ export default function Settings({ authData }) {
 
             <div className="form-group">
               <label className="form-label">Client Secret (Optional if Public Client)</label>
-              <input 
-                type="password" className="form-input" 
+              <input
+                type="password" className="form-input"
                 value={settings.OIDC_CLIENT_SECRET || ''}
                 onChange={(e) => setSettings({...settings, OIDC_CLIENT_SECRET: e.target.value})}
               />
             </div>
 
             <div className="form-group">
+              <label className="form-label">SecurityTrails API Key (Asset Discovery)</label>
+              <input
+                type="password" className="form-input"
+                value={settings.SECURITYTRAILS_API_KEY || ''}
+                onChange={(e) => setSettings({...settings, SECURITYTRAILS_API_KEY: e.target.value})}
+                placeholder="Optional"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Have I Been Pwned API Key (Credential Leaks)</label>
+              <input
+                type="password" className="form-input"
+                value={settings.HIBP_API_KEY || ''}
+                onChange={(e) => setSettings({...settings, HIBP_API_KEY: e.target.value})}
+                placeholder="Optional"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Intelligence X API Key (Dark Web / Identity Exposure)</label>
+              <input
+                type="password" className="form-input"
+                value={settings.INTELX_API_KEY || ''}
+                onChange={(e) => setSettings({...settings, INTELX_API_KEY: e.target.value})}
+                placeholder="Optional"
+              />
+            </div>
+
+            <div className="form-group">
               <label className="form-label">Frontend Callback URL (Informational)</label>
-              <input 
-                type="text" className="form-input" 
+              <input
+                type="text" className="form-input"
                 value={`${settings.FRONTEND_URL || ''}/callback`}
                 disabled
               />
@@ -335,6 +385,7 @@ export default function Settings({ authData }) {
                   <th>Username</th>
                   <th>Email</th>
                   <th>Role</th>
+                  <th>MFA</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -343,18 +394,18 @@ export default function Settings({ authData }) {
                   <tr key={u.id}>
                     <td>{u.id}</td>
                     <td>
-                      <input 
-                        className="form-input" 
-                        value={(userEdits[u.id] && userEdits[u.id].username) || ''} 
-                        onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), username: e.target.value } })} 
+                      <input
+                        className="form-input"
+                        value={(userEdits[u.id] && userEdits[u.id].username) || ''}
+                        onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), username: e.target.value } })}
                       />
                     </td>
                     <td>
-                      <input 
-                        className="form-input" 
-                        value={(userEdits[u.id] && userEdits[u.id].email) || ''} 
-                        onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), email: e.target.value } })} 
-                        placeholder="email@example.com" 
+                      <input
+                        className="form-input"
+                        value={(userEdits[u.id] && userEdits[u.id].email) || ''}
+                        onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), email: e.target.value } })}
+                        placeholder="email@example.com"
                       />
                     </td>
                     <td>
@@ -368,9 +419,17 @@ export default function Settings({ authData }) {
                       </select>
                     </td>
                     <td>
+                      <span className={`badge ${u.mfa_enabled ? 'badge-low' : 'badge-critical'}`}>
+                        {u.mfa_enabled ? 'Enabled' : 'Not Set'}
+                      </span>
+                    </td>
+                    <td>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button onClick={() => handleSetupMfa(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} title="Setup MFA">
                           Setup 2FA
+                        </button>
+                        <button onClick={() => handleDeleteMfa(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} title="Delete MFA">
+                          Delete 2FA
                         </button>
                         <button onClick={() => handleSaveUser(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }} title="Save User">
                           <Edit size={14} />
@@ -384,7 +443,7 @@ export default function Settings({ authData }) {
                 ))}
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan="5" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                    <td colSpan="6" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
                       No users found.
                     </td>
                   </tr>
@@ -408,10 +467,10 @@ export default function Settings({ authData }) {
             </div>
             <div className="form-group" style={{ marginBottom: '1rem' }}>
               <label className="form-label" style={{ textAlign: 'left' }}>Enter Verification Code</label>
-              <input 
-                className="form-input" 
-                type="text" 
-                placeholder="000000" 
+              <input
+                className="form-input"
+                type="text"
+                placeholder="000000"
                 value={mfaCode}
                 onChange={(e) => setMfaCode(e.target.value)}
                 maxLength={6}

@@ -11,6 +11,7 @@
   --border-hover: rgba(59, 130, 246, 0.4);
   
   --primary: #3b82f6; /* Electric Blue */
+  --primary-color: var(--primary);
   --primary-hover: #2563eb;
   --primary-glow: rgba(59, 130, 246, 0.3);
   
@@ -39,6 +40,7 @@ body.theme-days {
   --border-hover: rgba(37, 99, 235, 0.4);
   
   --primary: #2563eb;
+  --primary-color: var(--primary);
   --primary-hover: #1d4ed8;
   --primary-glow: rgba(37, 99, 235, 0.2);
   
@@ -470,6 +472,60 @@ tbody td code {
 
 .login-brand {
   margin-bottom: 2.5rem;
+}
+
+/* Dashboard charts */
+.grid-main {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.chart-wrapper {
+  width: 100%;
+  height: 320px;
+  min-height: 320px;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pagination-select {
+  min-width: 130px;
+}
+
+.pagination-page {
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Utils */
