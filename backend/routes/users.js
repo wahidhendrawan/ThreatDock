@@ -45,8 +45,7 @@ module.exports = function(db) {
     );
   });
 
-
-  // PATCH /api/users/:id
+  // PATCH /api/users/:id (From feature branch: Update full user details)
   router.patch('/:id', requireAdmin, (req, res) => {
     const id = parseInt(req.params.id, 10);
     const { username, email, role } = req.body;
@@ -72,6 +71,26 @@ module.exports = function(db) {
     });
   });
 
+  // PATCH /api/users/:id/role (From main branch: Update role only)
+  router.patch('/:id/role', requireAdmin, (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const { role } = req.body;
+
+    if (!['Admin', 'Analyst'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    db.get('SELECT id FROM users WHERE id = ?', [id], (findErr, user) => {
+      if (findErr) return res.status(500).json({ error: 'Database error' });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      db.run('UPDATE users SET role = ? WHERE id = ?', [role, id], function(updateErr) {
+        if (updateErr) return res.status(500).json({ error: 'Database error' });
+        res.json({ success: true, id, role });
+      });
+    });
+  });
+
   // DELETE /api/users/:id
   router.delete('/:id', requireAdmin, (req, res) => {
     const id = req.params.id;
@@ -86,7 +105,6 @@ module.exports = function(db) {
 
   // POST /api/users/:id/mfa/setup
   router.post('/:id/mfa/setup', async (req, res) => {
-    // Allow users to configure their own MFA, or Admins to configure others
     if (req.user.id !== parseInt(req.params.id) && req.user.role !== 'Admin') {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -100,7 +118,6 @@ module.exports = function(db) {
       try {
         const qrCodeUrl = await qrcode.toDataURL(otpauth);
         
-        // Save secret to database
         db.run('UPDATE users SET mfa_secret = ? WHERE id = ?', [secret, req.params.id], function(updateErr) {
           if (updateErr) return res.status(500).json({ error: 'Failed to save MFA secret' });
           res.json({ secret, qrCodeUrl });
