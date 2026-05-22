@@ -331,6 +331,36 @@ export default function Settings({ authData }) {
             </div>
 
             <div className="form-group">
+              <label className="form-label">AlienVault OTX API Key (Free Threat Intel)</label>
+              <input
+                type="password" className="form-input"
+                value={settings.OTX_API_KEY || ''}
+                onChange={(e) => setSettings({...settings, OTX_API_KEY: e.target.value})}
+                placeholder="Optional"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">URLScan.io API Key (Free Brand / Exposure Search)</label>
+              <input
+                type="password" className="form-input"
+                value={settings.URLSCAN_API_KEY || ''}
+                onChange={(e) => setSettings({...settings, URLSCAN_API_KEY: e.target.value})}
+                placeholder="Optional"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">VirusTotal API Key (Community Asset / Domain Intel)</label>
+              <input
+                type="password" className="form-input"
+                value={settings.VIRUSTOTAL_API_KEY || ''}
+                onChange={(e) => setSettings({...settings, VIRUSTOTAL_API_KEY: e.target.value})}
+                placeholder="Optional"
+              />
+            </div>
+
+            <div className="form-group">
               <label className="form-label">Frontend Callback URL (Informational)</label>
               <input
                 type="text" className="form-input"

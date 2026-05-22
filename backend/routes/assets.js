@@ -34,6 +34,10 @@ function getSettings(db) {
   });
 }
 
+function isDomain(value) {
+  return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value);
+}
+
 module.exports = function createAssetsRouter(db) {
   const router = express.Router();
 
@@ -112,6 +116,7 @@ module.exports = function createAssetsRouter(db) {
       }
 
       const enrichments = [];
+      const discoveredHosts = new Set();
       const securityTrailsKey = settings.SECURITYTRAILS_API_KEY || process.env.SECURITYTRAILS_API_KEY;
       if (securityTrailsKey) {
         try {
@@ -121,9 +126,85 @@ module.exports = function createAssetsRouter(db) {
           });
           const subdomains = (response.data.subdomains || []).slice(0, 50).map(s => `${s}.${cleanTarget}`);
           enrichments.push({ provider: 'SecurityTrails', type: 'subdomains', count: subdomains.length, items: subdomains });
+          subdomains.forEach(host => discoveredHosts.add(host));
         } catch (err) {
           enrichments.push({ provider: 'SecurityTrails', error: err.message });
         }
+      }
+
+      const otxKey = settings.OTX_API_KEY || process.env.OTX_API_KEY;
+      if (otxKey && isDomain(cleanTarget)) {
+        try {
+          const response = await axios.get(`https://otx.alienvault.com/api/v1/indicators/domain/${encodeURIComponent(cleanTarget)}/passive_dns`, {
+            headers: { 'X-OTX-API-KEY': otxKey },
+            timeout: 10000
+          });
+          const hostnames = (response.data.passive_dns || [])
+            .map(item => item.hostname || item.address)
+            .filter(Boolean)
+            .filter(host => host.endsWith(cleanTarget))
+            .slice(0, 50);
+          hostnames.forEach(host => discoveredHosts.add(host));
+          enrichments.push({ provider: 'AlienVault OTX', type: 'passive_dns', count: hostnames.length, items: hostnames });
+        } catch (err) {
+          enrichments.push({ provider: 'AlienVault OTX', error: err.message });
+        }
+      }
+
+      const vtKey = settings.VIRUSTOTAL_API_KEY || process.env.VIRUSTOTAL_API_KEY;
+      if (vtKey && isDomain(cleanTarget)) {
+        try {
+          const response = await axios.get(`https://www.virustotal.com/api/v3/domains/${encodeURIComponent(cleanTarget)}/subdomains`, {
+            headers: { 'x-apikey': vtKey },
+            params: { limit: 40 },
+            timeout: 10000
+          });
+          const subdomains = (response.data.data || [])
+            .map(item => item.id)
+            .filter(Boolean)
+            .slice(0, 40);
+          subdomains.forEach(host => discoveredHosts.add(host));
+          enrichments.push({ provider: 'VirusTotal Community', type: 'subdomains', count: subdomains.length, items: subdomains });
+        } catch (err) {
+          enrichments.push({ provider: 'VirusTotal Community', error: err.message });
+        }
+      }
+
+      const urlscanKey = settings.URLSCAN_API_KEY || process.env.URLSCAN_API_KEY;
+      if (isDomain(cleanTarget)) {
+        try {
+          const response = await axios.get('https://urlscan.io/api/v1/search/', {
+            headers: urlscanKey ? { 'API-Key': urlscanKey } : {},
+            params: { q: `domain:${cleanTarget}`, size: 25 },
+            timeout: 10000
+          });
+          const hosts = (response.data.results || [])
+            .map(item => item.page && item.page.domain)
+            .filter(Boolean)
+            .filter(host => host.endsWith(cleanTarget))
+            .slice(0, 25);
+          hosts.forEach(host => discoveredHosts.add(host));
+          enrichments.push({ provider: 'URLScan.io', type: 'observed_domains', count: hosts.length, items: hosts });
+        } catch (err) {
+          enrichments.push({ provider: 'URLScan.io', error: err.message });
+        }
+      }
+
+      for (const host of [...discoveredHosts].slice(0, 100)) {
+        await new Promise((resolve) => {
+          db.run(
+            `INSERT INTO assets (domain, service, status, risk_score, last_seen, notes)
+             VALUES (?, 'Discovered Subdomain', 'Active', 20, datetime('now'), ?)
+             ON CONFLICT(domain, ip, port) DO UPDATE SET
+               service = excluded.service,
+               status = 'Active',
+               risk_score = excluded.risk_score,
+               last_seen = datetime('now'),
+               notes = excluded.notes`,
+            [host, `Discovered while scanning ${cleanTarget}`],
+            () => resolve()
+          );
+        });
       }
 
       res.json({
@@ -134,8 +215,8 @@ module.exports = function createAssetsRouter(db) {
         enrichments,
         recommendations: [
           'Free/baseline: DNS lookup and TCP port probing are built in.',
-          'Open-source option: run Amass/Subfinder externally and import discovered assets.',
-          'API options: SecurityTrails, Shodan, Censys, or ProjectDiscovery Cloud with API keys.'
+          'Free/community API options: AlienVault OTX, URLScan.io, and VirusTotal Community API keys.',
+          'Open-source option: run Amass/Subfinder externally and import discovered assets.'
         ]
       });
     } catch (err) {
