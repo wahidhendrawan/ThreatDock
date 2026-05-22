@@ -181,6 +181,9 @@ db.serialize(() => {
       ensureSetting('INTELO_OWL_API_KEY', process.env.INTELO_OWL_API_KEY || '');
       ensureSetting('SLACK_WEBHOOK_URL', process.env.SLACK_WEBHOOK_URL || '');
       ensureSetting('N8N_WEBHOOK_URL', process.env.N8N_WEBHOOK_URL || '');
+      ensureSetting('TELEGRAM_BOT_TOKEN', process.env.TELEGRAM_BOT_TOKEN || '');
+      ensureSetting('TELEGRAM_CHAT_ID', process.env.TELEGRAM_CHAT_ID || '');
+      ensureSetting('TEAMS_WEBHOOK_URL', process.env.TEAMS_WEBHOOK_URL || '');
       ensureSetting('NOTIFY_THRESHOLD', process.env.NOTIFY_THRESHOLD || 'High');
       ensureSetting('PUBLIC_DNS_SERVERS', process.env.PUBLIC_DNS_SERVERS || '1.1.1.1,8.8.8.8');
     }
@@ -219,6 +222,9 @@ async function applyRuntimeSettings() {
     'INTELO_OWL_API_KEY',
     'SLACK_WEBHOOK_URL',
     'N8N_WEBHOOK_URL',
+    'TELEGRAM_BOT_TOKEN',
+    'TELEGRAM_CHAT_ID',
+    'TEAMS_WEBHOOK_URL',
     'NOTIFY_THRESHOLD'
   ];
   const settings = await getRuntimeSettings();
@@ -468,6 +474,8 @@ async function fetchAllSources() {
     try {
       await notificationService.sendSlackNotifications(alerts);
       await notificationService.sendN8nWebhook(alerts);
+      await notificationService.sendTelegramNotifications(alerts);
+      await notificationService.sendTeamsWebhook(alerts);
     } catch (notifyErr) {
       console.error('Error sending notifications:', notifyErr.message);
     }
