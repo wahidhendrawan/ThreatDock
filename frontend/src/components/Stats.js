@@ -13,8 +13,17 @@ import {
 } from 'recharts';
 
 function Stats({ alerts }) {
+  const normalizeSeverity = (value) => {
+    const v = String(value || '').toLowerCase();
+    if (v === 'critical') return 'Critical';
+    if (v === 'high') return 'High';
+    if (v === 'medium') return 'Medium';
+    if (v === 'low') return 'Low';
+    return 'Unknown';
+  };
+
   const severityCounts = alerts.reduce((acc, alert) => {
-    const sev = alert.severity || 'Unknown';
+    const sev = normalizeSeverity(alert.severity);
     acc[sev] = (acc[sev] || 0) + 1;
     return acc;
   }, {});
@@ -80,7 +89,7 @@ function Stats({ alerts }) {
         <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #ef4444' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Critical/High Alerts</div>
           <div style={{ fontSize: '2rem', fontWeight: '800', marginTop: '0.25rem', color: '#f87171' }}>
-            {alerts.filter(a => a.severity === 'Critical' || a.severity === 'High').length}
+            {alerts.filter(a => ['Critical', 'High'].includes(normalizeSeverity(a.severity))).length}
           </div>
         </div>
         <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #f59e0b' }}>

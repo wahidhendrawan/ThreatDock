@@ -5,7 +5,7 @@ export default function Settings({ authData }) {
   const [activeTab, setActiveTab] = useState('sso');
   const [settings, setSettings] = useState(null);
   const [users, setUsers] = useState([]);
-  const [roleEdits, setRoleEdits] = useState({});
+  const [userEdits, setUserEdits] = useState({});
   
   // New User Form
   const [newUser, setNewUser] = useState({ username: '', password: '', email: '', role: 'Analyst' });
@@ -47,7 +47,11 @@ export default function Settings({ authData }) {
     try {
       const res = await fetch(`${API_BASE}/users`, { headers });
       if (res.ok) {
-        setUsers(await res.json());
+        const rows = await res.json();
+        setUsers(rows);
+        const edits = {};
+        rows.forEach((u) => { edits[u.id] = { username: u.username || '', email: u.email || '', role: u.role || 'Analyst' }; });
+        setUserEdits(edits);
       }
     } catch (e) {
       console.error(e);
@@ -93,27 +97,26 @@ export default function Settings({ authData }) {
     }
   };
 
-
-  const handleRoleChange = async (id) => {
+  const handleSaveUser = async (id) => {
     try {
-      const selectedRole = roleEdits[id];
-      if (!selectedRole) return;
+      const edited = userEdits[id];
+      if (!edited) return;
 
-      const res = await fetch(`${API_BASE}/users/${id}/role`, {
+      const res = await fetch(`${API_BASE}/users/${id}`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ role: selectedRole })
+        body: JSON.stringify(edited)
       });
 
       if (res.ok) {
-        setMsg({ text: 'User role updated', type: 'success' });
+        setMsg({ text: 'User updated successfully', type: 'success' });
         fetchUsers();
       } else {
         const err = await res.json();
         setMsg({ text: `Error: ${err.error}`, type: 'error' });
       }
     } catch (e) {
-      setMsg({ text: 'Network error updating role.', type: 'error' });
+      setMsg({ text: 'Network error updating user.', type: 'error' });
     }
   };
 
@@ -184,8 +187,8 @@ export default function Settings({ authData }) {
 
       {msg.text && (
         <div style={{ padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px', 
-             backgroundColor: msg.type === 'error' ? 'var(--danger)' : 'var(--success)', 
-             color: '#fff', opacity: 0.9 }}>
+                     backgroundColor: msg.type === 'error' ? 'var(--danger)' : 'var(--success)', 
+                     color: '#fff', opacity: 0.9 }}>
           {msg.text}
         </div>
       )}
@@ -222,6 +225,18 @@ export default function Settings({ authData }) {
               >
                 <option value="true">Enabled (Mandatory)</option>
                 <option value="false">Disabled (Optional)</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Force MFA for Analyst Role</label>
+              <select
+                className="form-select"
+                value={settings.ANALYST_MFA_REQUIRED || 'false'}
+                onChange={(e) => setSettings({...settings, ANALYST_MFA_REQUIRED: e.target.value})}
+              >
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
               </select>
             </div>
 
@@ -327,13 +342,26 @@ export default function Settings({ authData }) {
                 {users.map(u => (
                   <tr key={u.id}>
                     <td>{u.id}</td>
-                    <td>{u.username}</td>
-                    <td>{u.email || '-'}</td>
+                    <td>
+                      <input 
+                        className="form-input" 
+                        value={(userEdits[u.id] && userEdits[u.id].username) || ''} 
+                        onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), username: e.target.value } })} 
+                      />
+                    </td>
+                    <td>
+                      <input 
+                        className="form-input" 
+                        value={(userEdits[u.id] && userEdits[u.id].email) || ''} 
+                        onChange={(e)=>setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), email: e.target.value } })} 
+                        placeholder="email@example.com" 
+                      />
+                    </td>
                     <td>
                       <select
                         className="form-select"
-                        value={roleEdits[u.id] || u.role}
-                        onChange={(e) => setRoleEdits({ ...roleEdits, [u.id]: e.target.value })}
+                        value={(userEdits[u.id] && userEdits[u.id].role) || u.role}
+                        onChange={(e) => setUserEdits({ ...userEdits, [u.id]: { ...(userEdits[u.id] || {}), role: e.target.value } })}
                       >
                         <option value="Admin">Admin</option>
                         <option value="Analyst">Analyst</option>
@@ -344,7 +372,7 @@ export default function Settings({ authData }) {
                         <button onClick={() => handleSetupMfa(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} title="Setup MFA">
                           Setup 2FA
                         </button>
-                        <button onClick={() => handleRoleChange(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }}>
+                        <button onClick={() => handleSaveUser(u.id)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }} title="Save User">
                           <Edit size={14} />
                         </button>
                         <button onClick={() => handleDeleteUser(u.id)} className="btn btn-danger" style={{ padding: '0.25rem 0.5rem' }}>

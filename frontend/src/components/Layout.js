@@ -66,7 +66,7 @@ function Layout({ user, onLogout, children }) {
             </div>
             <div className="user-info">
               <div className="user-name">{user ? user.name : 'Anonymous'}</div>
-              <div className="user-role">{user && user.email ? user.email : 'Analyst'}</div>
+              <div className="user-role">{user ? `${user.role || 'Analyst'}${user.email ? ` • ${user.email}` : ''}` : 'Analyst'}</div>
             </div>
             <button onClick={toggleTheme} style={{background:'transparent', border:'none', color:'var(--text-muted)', cursor:'pointer', padding:'4px', marginRight:'4px'}} title={`Switch to ${theme === 'midnight' ? 'Days' : 'Midnight'} Mode`}>
               {theme === 'midnight' ? <Sun size={18} /> : <Moon size={18} />}
