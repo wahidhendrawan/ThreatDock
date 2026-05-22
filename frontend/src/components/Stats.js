@@ -8,12 +8,22 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip
+  Tooltip,
+  Cell
 } from 'recharts';
 
 function Stats({ alerts }) {
+  const normalizeSeverity = (value) => {
+    const v = String(value || '').toLowerCase();
+    if (v === 'critical') return 'Critical';
+    if (v === 'high') return 'High';
+    if (v === 'medium') return 'Medium';
+    if (v === 'low') return 'Low';
+    return 'Unknown';
+  };
+
   const severityCounts = alerts.reduce((acc, alert) => {
-    const sev = alert.severity || 'Unknown';
+    const sev = normalizeSeverity(alert.severity);
     acc[sev] = (acc[sev] || 0) + 1;
     return acc;
   }, {});
@@ -38,6 +48,8 @@ function Stats({ alerts }) {
 
   const timeData = Object.keys(dateCounts)
     .map(key => ({ date: key, count: dateCounts[key] }));
+
+  const timelineData = timeData.length > 0 ? timeData : [{ date: 'No Date', count: alerts.length }];
 
   // Helper to get color depending on severity
   const getSeverityColor = (sev) => {
@@ -77,7 +89,7 @@ function Stats({ alerts }) {
         <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #ef4444' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Critical/High Alerts</div>
           <div style={{ fontSize: '2rem', fontWeight: '800', marginTop: '0.25rem', color: '#f87171' }}>
-            {alerts.filter(a => a.severity === 'Critical' || a.severity === 'High').length}
+            {alerts.filter(a => ['Critical', 'High'].includes(normalizeSeverity(a.severity))).length}
           </div>
         </div>
         <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #f59e0b' }}>
@@ -123,7 +135,7 @@ function Stats({ alerts }) {
                   >
                     {
                       severityData.map((entry, index) => (
-                        <Bar key={`cell-${index}`} fill={getSeverityColor(entry.severity)} />
+                        <Cell key={`cell-${index}`} fill={getSeverityColor(entry.severity)} />
                       ))
                     }
                   </Bar>
@@ -136,7 +148,7 @@ function Stats({ alerts }) {
             <h3 style={{ fontSize: '0.875rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '1rem' }}>Alerts Timeline</h3>
             <div className="chart-wrapper">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={timeData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <LineChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255, 255, 255, 0.05)" />
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 500}} />
                   <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} />
