@@ -26,8 +26,50 @@ function buildHeaders(key, name) {
   return key ? { [name]: key } : {};
 }
 
+function saveFindings(db, category, keyword, results) {
+  const stmt = db.prepare(`
+    INSERT INTO osint_findings (category, keyword, provider, type, title, severity, date, url, description, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
+  results.slice(0, 200).forEach(item => {
+    stmt.run(
+      category,
+      keyword,
+      item.provider || '',
+      item.type || '',
+      item.title || '',
+      item.severity || 'Unknown',
+      item.date || '',
+      item.url || '',
+      item.description || ''
+    );
+  });
+  stmt.finalize();
+}
+
 module.exports = function createOsintRouter(db) {
   const router = express.Router();
+
+  router.get('/findings', (req, res) => {
+    const { category, keyword } = req.query;
+    const conditions = [];
+    const params = [];
+    if (category) {
+      conditions.push('category = ?');
+      params.push(category);
+    }
+    if (keyword) {
+      conditions.push('lower(keyword) LIKE lower(?)');
+      params.push(`%${keyword}%`);
+    }
+    let query = 'SELECT * FROM osint_findings';
+    if (conditions.length > 0) query += ` WHERE ${conditions.join(' AND ')}`;
+    query += ' ORDER BY created_at DESC LIMIT 500';
+    db.all(query, params, (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+  });
 
   router.post('/digital-risk/search', async (req, res) => {
     const keyword = String(req.body.keyword || '').trim();
@@ -160,10 +202,12 @@ module.exports = function createOsintRouter(db) {
             description: row.externalId
           }));
 
+          const uniqueResults = uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`);
+          saveFindings(db, 'digital-risk', keyword, uniqueResults);
           res.json({
             keyword,
             providers,
-            results: uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`),
+            results: uniqueResults,
             notes: [
               'Free/community coverage uses URLScan.io and AlienVault OTX API keys for internet and threat-intel mentions.',
               'Credential and dark-web breach depth improves with HIBP_API_KEY and INTELX_API_KEY; without keys, results are limited to public/community sources and local alerts.'
@@ -294,9 +338,11 @@ module.exports = function createOsintRouter(db) {
             description: row.externalId
           }));
 
+          const uniqueResults = uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`);
+          saveFindings(db, 'brand-exposure', brand, uniqueResults);
           res.json({
             brand,
-            results: uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`),
+            results: uniqueResults,
             notes: [
               'Free/community coverage uses crt.sh, URLScan.io, AlienVault OTX, and VirusTotal Community.',
               'Use URLSCAN_API_KEY, OTX_API_KEY, and VIRUSTOTAL_API_KEY in Settings for richer brand exposure data.'

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, Edit } from 'lucide-react';
+import { Lock, Shield, Globe, Eye, Bell, Wifi, Users, Save, Plus, Trash2, Edit, Key, CheckCircle, AlertCircle } from 'lucide-react';
 
 export default function Settings({ authData }) {
-  const [activeTab, setActiveTab] = useState('sso');
+  const [activeTab, setActiveTab] = useState('auth');
   const [settings, setSettings] = useState(null);
   const [users, setUsers] = useState([]);
   const [userEdits, setUserEdits] = useState({});
@@ -194,6 +194,54 @@ export default function Settings({ authData }) {
     }
   };
 
+  /* ── Helper: status dot for API key fields ── */
+  const StatusDot = ({ value }) => (
+    <span style={{
+      display: 'inline-block',
+      width: '8px',
+      height: '8px',
+      borderRadius: '50%',
+      backgroundColor: value ? '#22c55e' : '#f59e0b',
+      marginRight: '8px',
+      flexShrink: 0
+    }}
+    title={value ? 'Configured' : 'Not configured'}
+    />
+  );
+
+  /* ── Helper: single API-key / secret field ── */
+  const ApiKeyField = ({ label, description, settingKey, placeholder }) => (
+    <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <StatusDot value={settings[settingKey]} />
+        {label}
+      </label>
+      <input
+        type="password"
+        className="form-input"
+        value={settings[settingKey] || ''}
+        onChange={(e) => setSettings({ ...settings, [settingKey]: e.target.value })}
+        placeholder={placeholder || 'Optional'}
+      />
+      {description && (
+        <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+          {description}
+        </span>
+      )}
+    </div>
+  );
+
+  /* ── Tab definitions ── */
+  const tabs = [
+    { id: 'auth',    label: 'Authentication & SSO',    icon: Lock },
+    { id: 'threat',  label: 'Threat Intelligence APIs', icon: Shield },
+    { id: 'asset',   label: 'Asset & Exposure APIs',    icon: Globe },
+    { id: 'risk',    label: 'Digital Risk APIs',         icon: Eye },
+    { id: 'notify',  label: 'Notifications',             icon: Bell },
+    { id: 'network', label: 'Network',                   icon: Wifi },
+    { id: 'users',   label: 'User Management',           icon: Users },
+  ];
+
   if (!settings && !msg.text) return <div className="card">Loading settings...</div>;
 
   return (
@@ -201,165 +249,145 @@ export default function Settings({ authData }) {
       <div className="page-header" style={{ marginBottom: '2rem' }}>
         <div>
           <h1 className="page-title">Settings & Management</h1>
-          <div className="page-subtitle">Configure OAuth integration and manage local users</div>
+          <div className="page-subtitle">Configure integrations, API keys, notifications and manage users</div>
         </div>
       </div>
 
       {msg.text && (
         <div style={{ padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px',
                      backgroundColor: msg.type === 'error' ? 'var(--danger)' : 'var(--success)',
-                     color: '#fff', opacity: 0.9 }}>
+                     color: '#fff', opacity: 0.9, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {msg.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle size={18} />}
           {msg.text}
         </div>
       )}
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-        <button
-          className={`btn ${activeTab === 'sso' ? 'btn-primary' : 'btn-outline'}`}
-          onClick={() => setActiveTab('sso')}
-          style={{ border: 'none', background: activeTab === 'sso' ? 'var(--primary)' : 'transparent' }}
-        >
-          Security & SSO
-        </button>
-        <button
-          className={`btn ${activeTab === 'users' ? 'btn-primary' : 'btn-outline'}`}
-          onClick={() => setActiveTab('users')}
-          style={{ border: 'none', background: activeTab === 'users' ? 'var(--primary)' : 'transparent' }}
-        >
-          User Management
-        </button>
+      {/* ───────── Tabs ───────── */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', flexWrap: 'wrap' }}>
+        {tabs.map(t => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              className={`btn ${activeTab === t.id ? 'btn-primary' : 'btn-outline'}`}
+              onClick={() => setActiveTab(t.id)}
+              style={{
+                border: 'none',
+                background: activeTab === t.id ? 'var(--primary)' : 'transparent',
+                display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem'
+              }}
+            >
+              <Icon size={15} />
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
-      {activeTab === 'sso' && settings && (
+      {/* ═══════════════════════════════════════════════════════════════
+           TAB 1 — Authentication & SSO
+         ═══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'auth' && settings && (
         <div className="card">
-          <h2 style={{ marginBottom: '1.5rem' }}>Global Security Configuration</h2>
-          <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <Lock size={20} /> Authentication & SSO
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
+              Multi-factor authentication requirements and corporate SSO / OIDC configuration.
+            </p>
+          </div>
 
+          <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
+            {/* MFA Required */}
             <div className="form-group">
               <label className="form-label">Require 2FA (MFA) Globally for Local Users</label>
               <select
                 className="form-select"
                 value={settings.MFA_REQUIRED || 'true'}
-                onChange={(e) => setSettings({...settings, MFA_REQUIRED: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, MFA_REQUIRED: e.target.value })}
               >
                 <option value="true">Enabled (Mandatory)</option>
                 <option value="false">Disabled (Optional)</option>
               </select>
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                When enabled, all local users must configure an authenticator app before accessing the platform.
+              </span>
             </div>
 
+            {/* Analyst MFA */}
             <div className="form-group">
               <label className="form-label">Force MFA for Analyst Role</label>
               <select
                 className="form-select"
                 value={settings.ANALYST_MFA_REQUIRED || 'false'}
-                onChange={(e) => setSettings({...settings, ANALYST_MFA_REQUIRED: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, ANALYST_MFA_REQUIRED: e.target.value })}
               >
                 <option value="true">Enabled</option>
                 <option value="false">Disabled</option>
               </select>
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Enforce MFA specifically for users with the Analyst role, even if global MFA is disabled.
+              </span>
             </div>
 
+            {/* SSO Enabled */}
             <div className="form-group">
               <label className="form-label">Enable Corporate SSO (OIDC)</label>
               <select
                 className="form-select"
                 value={settings.SSO_ENABLED}
-                onChange={(e) => setSettings({...settings, SSO_ENABLED: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, SSO_ENABLED: e.target.value })}
               >
                 <option value="true">Enabled</option>
                 <option value="false">Disabled</option>
               </select>
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Allow users to log in via your corporate identity provider using OpenID Connect.
+              </span>
             </div>
 
+            {/* OIDC Issuer URL */}
             <div className="form-group">
-              <label className="form-label">Issuer URL</label>
+              <label className="form-label">OIDC Issuer URL</label>
               <input
                 type="url" className="form-input"
                 value={settings.OIDC_ISSUER_URL || ''}
-                onChange={(e) => setSettings({...settings, OIDC_ISSUER_URL: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, OIDC_ISSUER_URL: e.target.value })}
                 placeholder="https://sso.yourdomain.com/application/o/app-name/"
               />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                The OpenID Connect discovery endpoint of your identity provider.
+              </span>
             </div>
 
+            {/* OIDC Client ID */}
             <div className="form-group">
-              <label className="form-label">Client ID</label>
+              <label className="form-label">OIDC Client ID</label>
               <input
                 type="text" className="form-input"
                 value={settings.OIDC_CLIENT_ID || ''}
-                onChange={(e) => setSettings({...settings, OIDC_CLIENT_ID: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, OIDC_CLIENT_ID: e.target.value })}
               />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                The client identifier registered with your identity provider.
+              </span>
             </div>
 
+            {/* OIDC Client Secret */}
             <div className="form-group">
-              <label className="form-label">Client Secret (Optional if Public Client)</label>
+              <label className="form-label">OIDC Client Secret</label>
               <input
                 type="password" className="form-input"
                 value={settings.OIDC_CLIENT_SECRET || ''}
-                onChange={(e) => setSettings({...settings, OIDC_CLIENT_SECRET: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, OIDC_CLIENT_SECRET: e.target.value })}
               />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Optional if using a public client. Required for confidential OIDC clients.
+              </span>
             </div>
 
-            <div className="form-group">
-              <label className="form-label">SecurityTrails API Key (Asset Discovery)</label>
-              <input
-                type="password" className="form-input"
-                value={settings.SECURITYTRAILS_API_KEY || ''}
-                onChange={(e) => setSettings({...settings, SECURITYTRAILS_API_KEY: e.target.value})}
-                placeholder="Optional"
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Have I Been Pwned API Key (Credential Leaks)</label>
-              <input
-                type="password" className="form-input"
-                value={settings.HIBP_API_KEY || ''}
-                onChange={(e) => setSettings({...settings, HIBP_API_KEY: e.target.value})}
-                placeholder="Optional"
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Intelligence X API Key (Dark Web / Identity Exposure)</label>
-              <input
-                type="password" className="form-input"
-                value={settings.INTELX_API_KEY || ''}
-                onChange={(e) => setSettings({...settings, INTELX_API_KEY: e.target.value})}
-                placeholder="Optional"
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">AlienVault OTX API Key (Free Threat Intel)</label>
-              <input
-                type="password" className="form-input"
-                value={settings.OTX_API_KEY || ''}
-                onChange={(e) => setSettings({...settings, OTX_API_KEY: e.target.value})}
-                placeholder="Optional"
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">URLScan.io API Key (Free Brand / Exposure Search)</label>
-              <input
-                type="password" className="form-input"
-                value={settings.URLSCAN_API_KEY || ''}
-                onChange={(e) => setSettings({...settings, URLSCAN_API_KEY: e.target.value})}
-                placeholder="Optional"
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">VirusTotal API Key (Community Asset / Domain Intel)</label>
-              <input
-                type="password" className="form-input"
-                value={settings.VIRUSTOTAL_API_KEY || ''}
-                onChange={(e) => setSettings({...settings, VIRUSTOTAL_API_KEY: e.target.value})}
-                placeholder="Optional"
-              />
-            </div>
-
+            {/* Frontend Callback URL */}
             <div className="form-group">
               <label className="form-label">Frontend Callback URL (Informational)</label>
               <input
@@ -367,6 +395,9 @@ export default function Settings({ authData }) {
                 value={`${settings.FRONTEND_URL || ''}/callback`}
                 disabled
               />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Use this as the redirect URI when configuring your identity provider.
+              </span>
             </div>
 
             <div style={{ marginTop: '1rem' }}>
@@ -376,11 +407,272 @@ export default function Settings({ authData }) {
         </div>
       )}
 
+      {/* ═══════════════════════════════════════════════════════════════
+           TAB 2 — Threat Intelligence APIs
+         ═══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'threat' && settings && (
+        <div className="card">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <Shield size={20} /> Threat Intelligence APIs
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
+              API keys for vulnerability databases, threat feeds, and IOC sources.
+            </p>
+          </div>
+
+          <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
+            <ApiKeyField
+              label="GitHub Token"
+              description="Used to query the GitHub Advisory Database for known vulnerabilities in open-source packages."
+              settingKey="GITHUB_TOKEN"
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            />
+            <ApiKeyField
+              label="NVD API Key"
+              description="Access the NIST National Vulnerability Database for CVE enrichment and lookups."
+              settingKey="NVD_API_KEY"
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            />
+            <ApiKeyField
+              label="AlienVault OTX API Key"
+              description="Open Threat Exchange — community-driven threat intelligence with IOC and pulse data."
+              settingKey="OTX_API_KEY"
+            />
+            <ApiKeyField
+              label="ThreatFox Auth Key"
+              description="ThreatFox by abuse.ch — indicators of compromise (IOCs) including malware, C2 servers."
+              settingKey="THREATFOX_AUTH_KEY"
+            />
+
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <StatusDot value={settings.MISP_URL} />
+                MISP Instance URL
+              </label>
+              <input
+                type="url"
+                className="form-input"
+                value={settings.MISP_URL || ''}
+                onChange={(e) => setSettings({ ...settings, MISP_URL: e.target.value })}
+                placeholder="https://misp.yourdomain.com"
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Base URL of your MISP (Malware Information Sharing Platform) instance.
+              </span>
+            </div>
+
+            <ApiKeyField
+              label="MISP API Key"
+              description="Authentication key for your MISP instance to pull and push threat intelligence events."
+              settingKey="MISP_API_KEY"
+            />
+            <ApiKeyField
+              label="IntelOwl API Key"
+              description="IntelOwl — aggregated threat intelligence analysis for observables (IPs, domains, hashes)."
+              settingKey="INTELO_OWL_API_KEY"
+            />
+
+            <div style={{ marginTop: '1rem' }}>
+              <button type="submit" className="btn btn-primary"><Save size={16} /> Save Configuration</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+           TAB 3 — Asset & Exposure APIs
+         ═══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'asset' && settings && (
+        <div className="card">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <Globe size={20} /> Asset & Exposure APIs
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
+              Services for asset discovery, domain intelligence, and external exposure scanning.
+            </p>
+          </div>
+
+          <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
+            <ApiKeyField
+              label="SecurityTrails API Key"
+              description="Discover subdomains, DNS records, and historical WHOIS data for your assets."
+              settingKey="SECURITYTRAILS_API_KEY"
+            />
+            <ApiKeyField
+              label="VirusTotal API Key"
+              description="Community API for domain reputation, file analysis, and URL scanning intelligence."
+              settingKey="VIRUSTOTAL_API_KEY"
+            />
+            <ApiKeyField
+              label="URLScan.io API Key"
+              description="Automated website scanning — detect phishing, brand impersonation, and exposure."
+              settingKey="URLSCAN_API_KEY"
+            />
+
+            <div style={{ marginTop: '1rem' }}>
+              <button type="submit" className="btn btn-primary"><Save size={16} /> Save Configuration</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+           TAB 4 — Digital Risk APIs
+         ═══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'risk' && settings && (
+        <div className="card">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <Eye size={20} /> Digital Risk APIs
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
+              Credential leak monitoring, dark web exposure, and identity breach detection.
+            </p>
+          </div>
+
+          <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
+            <ApiKeyField
+              label="Have I Been Pwned API Key"
+              description="Check if employee or corporate email addresses appear in known data breaches."
+              settingKey="HIBP_API_KEY"
+            />
+            <ApiKeyField
+              label="Intelligence X API Key"
+              description="Search leaked databases, dark web pastes, and historical data for identity exposure."
+              settingKey="INTELX_API_KEY"
+            />
+
+            <div style={{ marginTop: '1rem' }}>
+              <button type="submit" className="btn btn-primary"><Save size={16} /> Save Configuration</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+           TAB 5 — Notifications
+         ═══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'notify' && settings && (
+        <div className="card">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <Bell size={20} /> Notifications
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
+              Webhook URLs for alerting and the minimum severity threshold for outgoing notifications.
+            </p>
+          </div>
+
+          <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <StatusDot value={settings.SLACK_WEBHOOK_URL} />
+                Slack Webhook URL
+              </label>
+              <input
+                type="password"
+                className="form-input"
+                value={settings.SLACK_WEBHOOK_URL || ''}
+                onChange={(e) => setSettings({ ...settings, SLACK_WEBHOOK_URL: e.target.value })}
+                placeholder="https://hooks.slack.com/services/..."
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Incoming webhook URL for posting alerts to a Slack channel.
+              </span>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <StatusDot value={settings.N8N_WEBHOOK_URL} />
+                n8n Webhook URL
+              </label>
+              <input
+                type="password"
+                className="form-input"
+                value={settings.N8N_WEBHOOK_URL || ''}
+                onChange={(e) => setSettings({ ...settings, N8N_WEBHOOK_URL: e.target.value })}
+                placeholder="https://n8n.yourdomain.com/webhook/..."
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                n8n automation webhook for custom notification workflows and integrations.
+              </span>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label">Notification Threshold</label>
+              <select
+                className="form-select"
+                value={settings.NOTIFY_THRESHOLD || 'High'}
+                onChange={(e) => setSettings({ ...settings, NOTIFY_THRESHOLD: e.target.value })}
+              >
+                <option value="Critical">Critical</option>
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+              </select>
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Minimum severity level that triggers a notification. Findings below this threshold are logged but not alerted.
+              </span>
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <button type="submit" className="btn btn-primary"><Save size={16} /> Save Configuration</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+           TAB 6 — Network
+         ═══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'network' && settings && (
+        <div className="card">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <Wifi size={20} /> Network
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
+              Network-level configuration for DNS resolution and scanning infrastructure.
+            </p>
+          </div>
+
+          <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <StatusDot value={settings.PUBLIC_DNS_SERVERS} />
+                Public DNS Servers
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                value={settings.PUBLIC_DNS_SERVERS || ''}
+                onChange={(e) => setSettings({ ...settings, PUBLIC_DNS_SERVERS: e.target.value })}
+                placeholder="8.8.8.8,1.1.1.1,9.9.9.9"
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Comma-separated list of public DNS servers used for domain resolution during scans (e.g. 8.8.8.8, 1.1.1.1).
+              </span>
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <button type="submit" className="btn btn-primary"><Save size={16} /> Save Configuration</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+           TAB 7 — User Management  (kept as-is)
+         ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'users' && (
         <div className="grid grid-cols-1 gap-4" style={{ gridTemplateColumns: '1fr 2fr' }}>
           {/* Add User Form */}
           <div className="card">
-            <h3 style={{ marginBottom: '1.5rem' }}>Add Local User</h3>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+              <Users size={18} /> Add Local User
+            </h3>
             <form onSubmit={handleAddUser} className="form-group">
               <div className="form-group">
                 <label className="form-label">Username</label>
@@ -484,7 +776,7 @@ export default function Settings({ authData }) {
         </div>
       )}
 
-      {/* MFA Setup Modal Overlay */}
+      {/* ───────── MFA Setup Modal Overlay ───────── */}
       {mfaSetupData && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div className="card" style={{ maxWidth: '400px', width: '100%', textAlign: 'center' }}>

@@ -4,6 +4,7 @@ const net = require('net');
 const axios = require('axios');
 
 const COMMON_PORTS = [80, 443, 8080, 8443, 22, 25, 53, 110, 143, 993, 995, 3389];
+const DEFAULT_PUBLIC_DNS = ['1.1.1.1', '8.8.8.8'];
 
 function probePort(host, port, timeout = 1800) {
   return new Promise((resolve) => {
@@ -36,6 +37,20 @@ function getSettings(db) {
 
 function isDomain(value) {
   return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value);
+}
+
+async function publicLookup(host, settings) {
+  const resolver = new dns.Resolver();
+  const configuredServers = String(settings.PUBLIC_DNS_SERVERS || process.env.PUBLIC_DNS_SERVERS || '')
+    .split(',')
+    .map(server => server.trim())
+    .filter(Boolean);
+  resolver.setServers(configuredServers.length > 0 ? configuredServers : DEFAULT_PUBLIC_DNS);
+  const [v4, v6] = await Promise.all([
+    resolver.resolve4(host).catch(() => []),
+    resolver.resolve6(host).catch(() => [])
+  ]);
+  return [...v4.map(address => ({ address, family: 4 })), ...v6.map(address => ({ address, family: 6 }))];
 }
 
 module.exports = function createAssetsRouter(db) {
@@ -72,7 +87,12 @@ module.exports = function createAssetsRouter(db) {
 
     try {
       const settings = await getSettings(db);
-      const addresses = await dns.lookup(cleanTarget, { all: true }).catch(() => []);
+      const configuredDns = String(settings.PUBLIC_DNS_SERVERS || process.env.PUBLIC_DNS_SERVERS || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      const dnsServersUsed = configuredDns.length > 0 ? configuredDns : DEFAULT_PUBLIC_DNS;
+      const addresses = await publicLookup(cleanTarget, settings).catch(() => []);
       const uniqueIps = [...new Set(addresses.map(a => a.address))];
       const hostForProbe = uniqueIps[0] || cleanTarget;
       const openPorts = [];
@@ -210,6 +230,7 @@ module.exports = function createAssetsRouter(db) {
       res.json({
         target: cleanTarget,
         ips: uniqueIps,
+        dnsServers: dnsServersUsed,
         openPorts,
         saved,
         enrichments,

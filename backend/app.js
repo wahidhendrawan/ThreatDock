@@ -90,6 +90,20 @@ db.serialize(() => {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  db.run(`CREATE TABLE IF NOT EXISTS osint_findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT,
+    keyword TEXT,
+    provider TEXT,
+    type TEXT,
+    title TEXT,
+    severity TEXT,
+    date TEXT,
+    url TEXT,
+    description TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // Settings table for dynamic configuration
   db.run(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -135,7 +149,17 @@ db.serialize(() => {
         ['INTELX_API_KEY', process.env.INTELX_API_KEY || ''],
         ['OTX_API_KEY', process.env.OTX_API_KEY || ''],
         ['URLSCAN_API_KEY', process.env.URLSCAN_API_KEY || ''],
-        ['VIRUSTOTAL_API_KEY', process.env.VIRUSTOTAL_API_KEY || '']
+        ['VIRUSTOTAL_API_KEY', process.env.VIRUSTOTAL_API_KEY || ''],
+        ['GITHUB_TOKEN', process.env.GITHUB_TOKEN || ''],
+        ['NVD_API_KEY', process.env.NVD_API_KEY || ''],
+        ['THREATFOX_AUTH_KEY', process.env.THREATFOX_AUTH_KEY || ''],
+        ['MISP_URL', process.env.MISP_URL || ''],
+        ['MISP_API_KEY', process.env.MISP_API_KEY || ''],
+        ['INTELO_OWL_API_KEY', process.env.INTELO_OWL_API_KEY || ''],
+        ['SLACK_WEBHOOK_URL', process.env.SLACK_WEBHOOK_URL || ''],
+        ['N8N_WEBHOOK_URL', process.env.N8N_WEBHOOK_URL || ''],
+        ['NOTIFY_THRESHOLD', process.env.NOTIFY_THRESHOLD || 'High'],
+        ['PUBLIC_DNS_SERVERS', process.env.PUBLIC_DNS_SERVERS || '1.1.1.1,8.8.8.8']
       ];
       const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
       defaultSettings.forEach(s => stmt.run(s[0], s[1]));
@@ -149,6 +173,16 @@ db.serialize(() => {
       ensureSetting('OTX_API_KEY', process.env.OTX_API_KEY || '');
       ensureSetting('URLSCAN_API_KEY', process.env.URLSCAN_API_KEY || '');
       ensureSetting('VIRUSTOTAL_API_KEY', process.env.VIRUSTOTAL_API_KEY || '');
+      ensureSetting('GITHUB_TOKEN', process.env.GITHUB_TOKEN || '');
+      ensureSetting('NVD_API_KEY', process.env.NVD_API_KEY || '');
+      ensureSetting('THREATFOX_AUTH_KEY', process.env.THREATFOX_AUTH_KEY || '');
+      ensureSetting('MISP_URL', process.env.MISP_URL || '');
+      ensureSetting('MISP_API_KEY', process.env.MISP_API_KEY || '');
+      ensureSetting('INTELO_OWL_API_KEY', process.env.INTELO_OWL_API_KEY || '');
+      ensureSetting('SLACK_WEBHOOK_URL', process.env.SLACK_WEBHOOK_URL || '');
+      ensureSetting('N8N_WEBHOOK_URL', process.env.N8N_WEBHOOK_URL || '');
+      ensureSetting('NOTIFY_THRESHOLD', process.env.NOTIFY_THRESHOLD || 'High');
+      ensureSetting('PUBLIC_DNS_SERVERS', process.env.PUBLIC_DNS_SERVERS || '1.1.1.1,8.8.8.8');
     }
   });
 
@@ -163,6 +197,37 @@ db.serialize(() => {
   });
 });
 
+function getRuntimeSettings() {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT key, value FROM settings', [], (err, rows) => {
+      if (err) return reject(err);
+      const settings = {};
+      rows.forEach(row => { settings[row.key] = row.value; });
+      resolve(settings);
+    });
+  });
+}
+
+async function applyRuntimeSettings() {
+  const runtimeKeys = [
+    'GITHUB_TOKEN',
+    'NVD_API_KEY',
+    'OTX_API_KEY',
+    'THREATFOX_AUTH_KEY',
+    'MISP_URL',
+    'MISP_API_KEY',
+    'INTELO_OWL_API_KEY',
+    'SLACK_WEBHOOK_URL',
+    'N8N_WEBHOOK_URL',
+    'NOTIFY_THRESHOLD'
+  ];
+  const settings = await getRuntimeSettings();
+  runtimeKeys.forEach(key => {
+    if (settings[key] !== undefined) process.env[key] = settings[key];
+  });
+  return settings;
+}
+
 // Utility: map Red Hat severities to standardized values
 function mapRedHatSeverity(sev) {
   if (!sev) return 'Unknown';
@@ -176,6 +241,7 @@ function mapRedHatSeverity(sev) {
  */
 async function fetchAllSources() {
   try {
+    await applyRuntimeSettings();
     // Fetch data in parallel
     const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.all([
       githubService.fetchGitHubAdvisories(),
