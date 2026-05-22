@@ -5,16 +5,21 @@ ThreatDock is a professional-grade security alert aggregator and threat intellig
 
 ---
 
+## ℹ️ About
+
+ThreatDock is designed to centralize and automate the workflow of Security Operations Centers (SOC) and threat hunters. By aggregating external attack surface management (EASM) data, digital risk protection (DRP), and threat intelligence (TI) into a single pane of glass, ThreatDock drastically reduces the mean time to detect (MTTD) and mean time to respond (MTTR) to emerging threats and active exposures.
+
+---
+
 ## 🚀 Key Features
 - **Intelligent Aggregation**: Unified feed from GitHub Security Advisories, NVD CVEs, Red Hat Security, AlienVault OTX, and ThreatFox.
 - **Advanced Ingestion**: Built-in RSS collectors for SANS ISC, CISA (US-CERT), BleepingComputer, Dark Reading, and more.
-- **Actionable UI**: React-based dashboard featuring real-time statistics, severity filtering, and MITRE ATT&CK phase tracking.
-- **Extensible Backend**: Modular service-based architecture (Node.js/Express) for easy integration of new TI sources.
-- **Automated Notifications**: Slack integration with customizable severity thresholds.
-- **SOC-Ready**: Supports alert status management (Open/In Progress/Closed) and manual enrichment.
-- **SSO Integration**: Out-of-the-box support for Authentik OAuth2 Single Sign-On, fully integrated with local User Management and Role-Based Access Control (RBAC).
-- **Dynamic Configuration**: Manage users, assign roles (Admin/Analyst) to both local and SSO users, and configure settings directly from the web interface, backed by a persistent SQLite database.
+- **Contextual Asset Intelligence**: Deeply enriches assets with mapped CVEs, active IOCs, vendor risks, and OSINT findings.
+- **Unified Risk Prioritization**: Single scoring system across External Assets, Digital Risk, Brand Exposure, and Third-Party Risk Management.
+- **Context-Rich Threat Analysis**: Visual MITRE ATT&CK distribution and deep correlation mapping.
+- **Automated Notifications**: Slack, Microsoft Teams, Telegram, and n8n webhooks with customizable severity thresholds.
 - **Enterprise Architecture**: Built-in Nginx Reverse Proxy handles API routing (`/api` and `/auth`) transparently without cross-origin issues or SSL mixed-content errors.
+- **Dynamic Configuration**: UI-driven API key management with active validation status.
 
 ---
 
