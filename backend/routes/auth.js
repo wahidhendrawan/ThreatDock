@@ -29,10 +29,25 @@ const getSettings = (db) => {
   });
 };
 
+function isValidIssuerUrl(url) {
+  if (typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    if (!parsed.hostname || parsed.hostname === 'localhost') return false;
+    return parsed.hostname.includes('.');
+  } catch {
+    return false;
+  }
+}
+
 // GET /auth/login - Redirects to authorization endpoint via Discovery
 router.get('/login', async (req, res) => {
   try {
     const settings = await getSettings(req.db);
+    if (!isValidIssuerUrl(settings.OIDC_ISSUER_URL)) {
+      return res.status(400).json({ error: 'Invalid or missing OIDC issuer URL' });
+    }
     const redirectUri = `${settings.FRONTEND_URL}/callback`;
     
     // Default to a constructed URL
@@ -48,7 +63,7 @@ router.get('/login', async (req, res) => {
         `${settings.OIDC_ISSUER_URL}/.well-known/openid-configuration`;
         
       const response = await axios.get(discoveryUrl, { timeout: 3000 });
-      if (response.data && response.data.authorization_endpoint) {
+      if (response.data && typeof response.data.authorization_endpoint === 'string' && isValidIssuerUrl(response.data.authorization_endpoint)) {
         authorizeEndpoint = response.data.authorization_endpoint;
       }
     } catch (discoveryError) {
@@ -58,6 +73,10 @@ router.get('/login', async (req, res) => {
     const authorizeUrl = new URL(authorizeEndpoint);
     if (!/^https?:\/\//i.test(authorizeUrl.origin)) {
       return res.status(400).json({ error: 'Invalid OIDC issuer URL' });
+    }
+    const allowedSchemes = ['https:'];
+    if (!allowedSchemes.includes(authorizeUrl.protocol)) {
+      return res.status(400).json({ error: 'Invalid OIDC issuer URL protocol' });
     }
     authorizeUrl.searchParams.append('client_id', settings.OIDC_CLIENT_ID);
     authorizeUrl.searchParams.append('response_type', 'code');

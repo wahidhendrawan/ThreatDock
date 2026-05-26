@@ -10,7 +10,8 @@ module.exports = function createAlertsRouter(db) {
 
   // GET /alerts - return all alerts with optional filters
   router.get('/', (req, res) => {
-    const { severity, source, start, end, status, search } = req.query;
+    const { severity, source, start, end, status, search: rawSearch } = req.query;
+    const search = typeof rawSearch === 'string' ? rawSearch : '';
     let query = 'SELECT * FROM alerts';
     const conditions = [];
     const params = [];

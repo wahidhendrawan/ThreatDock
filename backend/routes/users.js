@@ -48,9 +48,10 @@ module.exports = function(db) {
   // PATCH /api/users/:id (From feature branch: Update full user details)
   router.patch('/:id', requireAdmin, (req, res) => {
     const id = parseInt(req.params.id, 10);
-    const { username, email, role } = req.body;
+    const { username: rawUsername, email, role } = req.body;
+    const username = typeof rawUsername === 'string' ? rawUsername : '';
 
-    if (!username || username.trim() === '') return res.status(400).json({ error: 'Username is required' });
+    if (username.trim() === '') return res.status(400).json({ error: 'Username is required' });
     if (!['Admin', 'Analyst'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
 
     db.get('SELECT id FROM users WHERE id = ?', [id], (findErr, user) => {

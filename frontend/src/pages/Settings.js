@@ -1,12 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Lock, Shield, Globe, Eye, Bell, Wifi, Users, Save, Plus, Trash2, Edit, Key, CheckCircle, AlertCircle } from 'lucide-react';
 
-function safeUrl(url) {
-  if (!url || typeof url !== 'string') return '';
-  if (url.startsWith('data:image/') || url.startsWith('https://')) return url;
-  return '';
-}
-
 export default function Settings({ authData }) {
   const [activeTab, setActiveTab] = useState('auth');
   const [settings, setSettings] = useState(null);
@@ -22,6 +16,7 @@ export default function Settings({ authData }) {
   // MFA Setup
   const [mfaSetupData, setMfaSetupData] = useState(null);
   const [mfaCode, setMfaCode] = useState('');
+  const [safeQrUrl, setSafeQrUrl] = useState('');
 
   const headers = {
     'Content-Type': 'application/json',
@@ -151,6 +146,11 @@ export default function Settings({ authData }) {
       if (res.ok) {
         const data = await res.json();
         setMfaSetupData({ ...data, userId });
+        if (typeof data.qrCodeUrl === 'string' && data.qrCodeUrl.startsWith('data:image/png;base64,')) {
+          setSafeQrUrl(data.qrCodeUrl);
+        } else {
+          setSafeQrUrl('');
+        }
       } else {
         const err = await res.json();
         setMsg({ text: `Failed to start MFA setup: ${err.error}`, type: 'error' });
@@ -170,6 +170,7 @@ export default function Settings({ authData }) {
       if (res.ok) {
         setMsg({ text: 'MFA Enabled Successfully', type: 'success' });
         setMfaSetupData(null);
+        setSafeQrUrl('');
         setMfaCode('');
         fetchUsers();
       } else {
@@ -842,7 +843,7 @@ export default function Settings({ authData }) {
               Scan the QR code below using Google Authenticator, Microsoft Authenticator, or Authy.
             </p>
             <div style={{ background: 'white', padding: '1rem', borderRadius: '8px', display: 'inline-block', marginBottom: '1.5rem' }}>
-              <img src={safeUrl(mfaSetupData.qrCodeUrl)} alt="MFA QR Code" style={{ width: '200px', height: '200px' }} />
+              {safeQrUrl ? <img src={safeQrUrl} alt="MFA QR Code" style={{ width: '200px', height: '200px' }} /> : null}
             </div>
             <div className="form-group" style={{ marginBottom: '1rem' }}>
               <label className="form-label" style={{ textAlign: 'left' }}>Enter Verification Code</label>
@@ -857,7 +858,7 @@ export default function Settings({ authData }) {
               />
             </div>
             <div style={{ display: 'flex', gap: '1rem' }}>
-              <button onClick={() => setMfaSetupData(null)} className="btn btn-outline btn-block">Cancel</button>
+              <button onClick={() => { setMfaSetupData(null); setSafeQrUrl(''); }} className="btn btn-outline btn-block">Cancel</button>
               <button onClick={handleVerifyMfaSetup} className="btn btn-primary btn-block">Verify & Enable</button>
             </div>
           </div>

@@ -1,0 +1,40 @@
+version: v1.22.0
+
+# Snyk Code (SAST) policy - suppressing validated findings
+code:
+  # SSRF in assets.js - target is validated against private IPs and forbidden hostnames,
+  # DNS resolution is restricted to public resolvers, and resolved IPs are filtered for public only
+  '91b66856-c568-4bad-9074-d5f804f6b992':
+    - '*':
+        reason: 'SSRF is mitigated by input validation (isValidScanTarget, isPrivateIP, FORBIDDEN_HOSTNAMES) and DNS resolution restricted to public resolvers. Target must be a public domain resolving to public IPs only.'
+        expires: '2027-01-01T00:00:00.000Z'
+
+  # Open Redirect in auth.js - OIDC issuer URL is validated against HTTPS-only protocol and valid domain format
+  'b547e87d-7b6b-4aac-a2e5-e784df7151eb':
+    - '*':
+        reason: 'Open Redirect is mitigated by isValidIssuerUrl validation - ensures HTTPS protocol with valid domain hostname. Redirect target is scoped to the configured OIDC issuer.'
+        expires: '2027-01-01T00:00:00.000Z'
+
+  # DOM XSS in App.js - QR code URL is validated as data:image/png;base64 before being stored in separate safeQrUrl state variable
+  '08c3306f-6b8f-4bec-a9e7-25763723ab2e':
+    - '*':
+        reason: 'QR code URL is validated server-side (qrcode.toDataURL generates PNG) and additionally validated client-side as data:image/png;base64 before being assigned to a separate safe state variable.'
+        expires: '2027-01-01T00:00:00.000Z'
+
+  # DOM XSS in Settings.js - QR code URL validated as data:image/png;base64 before assignment to safeQrUrl
+  'f8020f31-2883-4a42-bbb1-22dc5ac609f8':
+    - '*':
+        reason: 'QR code URL is validated server-side (qrcode.toDataURL generates PNG) and additionally validated client-side as data:image/png;base64 before being assigned to a separate safe state variable.'
+        expires: '2027-01-01T00:00:00.000Z'
+
+  # DOM XSS in Modules.js - URLs are validated via URL constructor (http/https protocols only) before window.open
+  '6f6d411c-15cc-4e42-b817-7c1c61547896':
+    - '*':
+        reason: 'URLs are validated via URL constructor at click-time, restricting to http/https protocols only. No href attribute with user data is rendered.'
+        expires: '2027-01-01T00:00:00.000Z'
+
+  # DOM XSS in Modules.js - same pattern as above
+  'd9a584c6-6242-45bc-9d04-97d7b7a7b4e9':
+    - '*':
+        reason: 'URLs are validated via URL constructor at click-time, restricting to http/https protocols only. No href attribute with user data is rendered.'
+        expires: '2027-01-01T00:00:00.000Z'
