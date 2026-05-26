@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+
+function safeUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  if (url.startsWith('data:image/') || url.startsWith('https://')) return url;
+  return '';
+}
 import Layout from './components/Layout';
 import Filters from './components/Filters';
 import AlertList from './components/AlertList';
@@ -396,7 +402,7 @@ function AppContent() {
               {mfaSetupData && (
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ background: 'white', padding: '1rem', borderRadius: '8px', display: 'inline-block', marginBottom: '1rem' }}>
-                    <img src={mfaSetupData.qrCodeUrl} alt="MFA QR Code" style={{ width: '180px', height: '180px' }} />
+                    <img src={safeUrl(mfaSetupData.qrCodeUrl)} alt="MFA QR Code" style={{ width: '180px', height: '180px' }} />
                   </div>
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', wordBreak: 'break-all' }}>
                     Secret: {mfaSetupData.secret}

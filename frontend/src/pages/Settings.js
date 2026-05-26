@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Lock, Shield, Globe, Eye, Bell, Wifi, Users, Save, Plus, Trash2, Edit, Key, CheckCircle, AlertCircle } from 'lucide-react';
 
+function safeUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  if (url.startsWith('data:image/') || url.startsWith('https://')) return url;
+  return '';
+}
+
 export default function Settings({ authData }) {
   const [activeTab, setActiveTab] = useState('auth');
   const [settings, setSettings] = useState(null);
@@ -836,7 +842,7 @@ export default function Settings({ authData }) {
               Scan the QR code below using Google Authenticator, Microsoft Authenticator, or Authy.
             </p>
             <div style={{ background: 'white', padding: '1rem', borderRadius: '8px', display: 'inline-block', marginBottom: '1.5rem' }}>
-              <img src={mfaSetupData.qrCodeUrl} alt="MFA QR Code" style={{ width: '200px', height: '200px' }} />
+              <img src={safeUrl(mfaSetupData.qrCodeUrl)} alt="MFA QR Code" style={{ width: '200px', height: '200px' }} />
             </div>
             <div className="form-group" style={{ marginBottom: '1rem' }}>
               <label className="form-label" style={{ textAlign: 'left' }}>Enter Verification Code</label>

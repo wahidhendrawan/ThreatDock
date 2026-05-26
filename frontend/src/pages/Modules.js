@@ -4,6 +4,12 @@ import {
   TrendingUp, Network, Lock, Eye, Building2,
   AlertTriangle, Shield, ExternalLink, ChevronDown, ChevronUp
 } from 'lucide-react';
+
+function safeUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  if (url.startsWith('https://') || url.startsWith('http://')) return url;
+  return '';
+}
 import PaginationControls, { usePagination } from '../components/PaginationControls';
 
 // Helper to build auth headers
@@ -130,7 +136,7 @@ export function ThreatHunting({ authData }) {
                     <td style={{ fontWeight: 600, color: 'var(--primary-color)' }}>{a.source}</td>
                     <td><code style={{ fontSize: '0.8rem' }}>{a.externalId}</code></td>
                     <td><span className={`severity-badge severity-${a.severity || 'Unknown'}`}>{a.severity}</span></td>
-                    <td>{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="alert-link">{a.title}</a> : a.title}</td>
+                    <td>{a.url ? <a href={safeUrl(a.url)} target="_blank" rel="noopener noreferrer" className="alert-link">{a.title}</a> : a.title}</td>
                     <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)', fontSize: '0.85rem' }}>{a.date ? new Date(a.date).toLocaleDateString() : '-'}</td>
                   </tr>
                 ))}
@@ -1218,7 +1224,7 @@ export function ThirdPartyRisk({ authData }) {
                       <td><span className={`severity-badge severity-${match.severity || 'Unknown'}`}>{match.severity || 'Unknown'}</span></td>
                       <td>{match.title?.substring(0, 100)}</td>
                       <td>{match.date ? new Date(match.date).toLocaleDateString() : '-'}</td>
-                      <td>{match.url ? <a href={match.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /></a> : '-'}</td>
+                      <td>{match.url ? <a href={safeUrl(match.url)} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /></a> : '-'}</td>
                     </tr>
                   ))}
                 </tbody>
