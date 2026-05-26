@@ -6,6 +6,21 @@ const axios = require('axios');
 const COMMON_PORTS = [80, 443, 8080, 8443, 22, 25, 53, 110, 143, 993, 995, 3389];
 const DEFAULT_PUBLIC_DNS = ['1.1.1.1', '8.8.8.8'];
 
+function isPrivateIP(ip) {
+  if (!ip || typeof ip !== 'string') return false;
+  const parts = ip.split('.');
+  if (parts.length !== 4) return false;
+  const first = parseInt(parts[0], 10);
+  const second = parseInt(parts[1], 10);
+  if (isNaN(first) || isNaN(second)) return false;
+  if (first === 10) return true;
+  if (first === 127) return true;
+  if (first === 169 && second === 254) return true;
+  if (first === 172 && second >= 16 && second <= 31) return true;
+  if (first === 192 && second === 168) return true;
+  return false;
+}
+
 function probePort(host, port, timeout = 1800) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -95,6 +110,11 @@ module.exports = function createAssetsRouter(db) {
       const addresses = await publicLookup(cleanTarget, settings).catch(() => []);
       const uniqueIps = [...new Set(addresses.map(a => a.address))];
       const hostForProbe = uniqueIps[0] || cleanTarget;
+
+      if (isPrivateIP(hostForProbe)) {
+        return res.status(400).json({ error: 'Scanning private/internal IP addresses is not allowed' });
+      }
+
       const openPorts = [];
 
       for (const port of scanPorts) {

@@ -56,6 +56,9 @@ router.get('/login', async (req, res) => {
     }
 
     const authorizeUrl = new URL(authorizeEndpoint);
+    if (!/^https?:\/\//i.test(authorizeUrl.origin)) {
+      return res.status(400).json({ error: 'Invalid OIDC issuer URL' });
+    }
     authorizeUrl.searchParams.append('client_id', settings.OIDC_CLIENT_ID);
     authorizeUrl.searchParams.append('response_type', 'code');
     authorizeUrl.searchParams.append('redirect_uri', redirectUri);

@@ -21,8 +21,12 @@ const app = express();
 const PORT = process.env.PORT || 5002;
 
 // Middleware
+const helmet = require('helmet');
+app.use(helmet());
 app.use(cors());
 app.use(express.json());
+
+app.disable('x-powered-by');
 
 // Initialize SQLite database
 const dbPath = process.env.DB_PATH || 'alerts.db';
