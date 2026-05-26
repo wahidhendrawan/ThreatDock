@@ -1,4 +1,4 @@
-FROM node:25.9.0-trixie-slim AS build
+FROM node:25.9.0-alpine3.23 AS build
 WORKDIR /app
 
 # Install dependencies
