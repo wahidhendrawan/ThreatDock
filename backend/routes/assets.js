@@ -21,8 +21,14 @@ function isPrivateIP(ip) {
   return false;
 }
 
+const FORBIDDEN_HOSTNAMES = ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]', 'metadata.google.internal', '169.254.169.254'];
+
 function probePort(host, port, timeout = 1800) {
   return new Promise((resolve) => {
+    if (!host || typeof host !== 'string') { resolve(false); return; }
+    const lower = host.toLowerCase();
+    if (FORBIDDEN_HOSTNAMES.includes(lower)) { resolve(false); return; }
+    if (net.isIP(host) && isPrivateIP(host)) { resolve(false); return; }
     const socket = new net.Socket();
     let done = false;
     const finish = (open) => {
@@ -90,11 +96,22 @@ module.exports = function createAssetsRouter(db) {
     stmt.finalize();
   });
 
+  function isValidScanTarget(target) {
+    if (!target || typeof target !== 'string') return false;
+    const clean = target.replace(/^https?:\/\//, '').split('/')[0];
+    if (FORBIDDEN_HOSTNAMES.includes(clean.toLowerCase())) return false;
+    if (net.isIP(clean) && isPrivateIP(clean)) return false;
+    return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(clean) && clean.includes('.');
+  }
+
   // POST /api/assets/scan
   router.post('/scan', async (req, res) => {
-    const { target, ports } = req.body;
-    const cleanTarget = String(target || '').trim().replace(/^https?:\/\//, '').split('/')[0];
-    if (!cleanTarget) return res.status(400).json({ error: 'Target domain or host is required' });
+    const { target: rawTarget, ports } = req.body;
+    const target = typeof rawTarget === 'string' ? rawTarget : '';
+    const cleanTarget = target.trim().replace(/^https?:\/\//, '').split('/')[0];
+    if (!cleanTarget || !isValidScanTarget(cleanTarget)) {
+      return res.status(400).json({ error: 'Valid public target domain or host is required' });
+    }
 
     const scanPorts = Array.isArray(ports) && ports.length > 0
       ? ports.map(p => parseInt(p, 10)).filter(p => p > 0 && p <= 65535).slice(0, 50)
@@ -109,12 +126,13 @@ module.exports = function createAssetsRouter(db) {
       const dnsServersUsed = configuredDns.length > 0 ? configuredDns : DEFAULT_PUBLIC_DNS;
       const addresses = await publicLookup(cleanTarget, settings).catch(() => []);
       const uniqueIps = [...new Set(addresses.map(a => a.address))];
-      const hostForProbe = uniqueIps[0] || cleanTarget;
+      const resolvedIps = uniqueIps.filter(ip => !isPrivateIP(ip));
 
-      if (isPrivateIP(hostForProbe)) {
-        return res.status(400).json({ error: 'Scanning private/internal IP addresses is not allowed' });
+      if (resolvedIps.length === 0) {
+        return res.status(400).json({ error: 'Could not resolve target to a public IP address' });
       }
 
+      const hostForProbe = resolvedIps[0];
       const openPorts = [];
 
       for (const port of scanPorts) {

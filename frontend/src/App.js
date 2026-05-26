@@ -1,11 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
-function safeUrl(url) {
-  if (!url || typeof url !== 'string') return '';
-  if (url.startsWith('data:image/') || url.startsWith('https://')) return url;
-  return '';
-}
 import Layout from './components/Layout';
 import Filters from './components/Filters';
 import AlertList from './components/AlertList';
@@ -104,6 +99,7 @@ function AppContent() {
   const [mfaCode, setMfaCode] = useState('');
   const [mfaSetupRequired, setMfaSetupRequired] = useState(false);
   const [mfaSetupData, setMfaSetupData] = useState(null);
+  const [safeQrUrl, setSafeQrUrl] = useState('');
 
   // SSO State
   const [ssoConfig, setSsoConfig] = useState(null);
@@ -135,6 +131,7 @@ function AppContent() {
             setTempToken(data.tempToken);
             setMfaSetupRequired(data.setupRequired);
             setMfaSetupData(null);
+            setSafeQrUrl('');
             setMfaCode('');
             setNeedsAuth(true);
             window.history.replaceState({}, document.title, "/");
@@ -241,6 +238,7 @@ function AppContent() {
           setTempToken(data.tempToken);
           setMfaSetupRequired(data.setupRequired);
           setMfaSetupData(null);
+          setSafeQrUrl('');
           setMfaCode('');
         } else {
           localStorage.setItem('threatdock_token', data.access_token);
@@ -267,6 +265,11 @@ function AppContent() {
           return;
         }
         setMfaSetupData(data);
+        if (typeof data.qrCodeUrl === 'string' && data.qrCodeUrl.startsWith('data:image/png;base64,')) {
+          setSafeQrUrl(data.qrCodeUrl);
+        } else {
+          setSafeQrUrl('');
+        }
       })
       .catch(() => setLoginError('Network error. Please try again.'));
   };
@@ -294,6 +297,7 @@ function AppContent() {
         setTempToken('');
         setMfaSetupRequired(false);
         setMfaSetupData(null);
+        setSafeQrUrl('');
         setMfaCode('');
       })
       .catch(() => setLoginError('Network error. Please try again.'));
@@ -308,6 +312,7 @@ function AppContent() {
     setMfaRequired(false);
     setMfaSetupRequired(false);
     setMfaSetupData(null);
+    setSafeQrUrl('');
     setLoginUser('');
     setLoginPass('');
     setMfaCode('');
@@ -402,7 +407,9 @@ function AppContent() {
               {mfaSetupData && (
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ background: 'white', padding: '1rem', borderRadius: '8px', display: 'inline-block', marginBottom: '1rem' }}>
-                    <img src={safeUrl(mfaSetupData.qrCodeUrl)} alt="MFA QR Code" style={{ width: '180px', height: '180px' }} />
+                    {safeQrUrl ? (
+                      <img src={safeQrUrl} alt="MFA QR Code" style={{ width: '180px', height: '180px' }} />
+                    ) : null}
                   </div>
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', wordBreak: 'break-all' }}>
                     Secret: {mfaSetupData.secret}
@@ -431,7 +438,7 @@ function AppContent() {
                 </>
               )}
               
-              <button type="button" onClick={() => { setMfaRequired(false); setMfaSetupRequired(false); setMfaSetupData(null); setMfaCode(''); }} className="btn btn-outline btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
+              <button type="button" onClick={() => { setMfaRequired(false); setMfaSetupRequired(false); setMfaSetupData(null); setSafeQrUrl(''); setMfaCode(''); }} className="btn btn-outline btn-block" style={{ padding: '0.875rem', fontSize: '1rem', marginTop: '0.5rem' }}>
                 Back to Login
               </button>
             </form>
