@@ -16,8 +16,10 @@ ThreatDock is designed to centralize and automate the workflow of Security Opera
 - **Advanced Ingestion**: Built-in RSS collectors for SANS ISC, CISA (US-CERT), BleepingComputer, Dark Reading, and more.
 - **Contextual Asset Intelligence**: Deeply enriches assets with mapped CVEs, active IOCs, vendor risks, and OSINT findings.
 - **Unified Risk Prioritization**: Single scoring system across External Assets, Digital Risk, Brand Exposure, and Third-Party Risk Management.
+- **Case Management Workflow**: Alert ownership, priority, SLA dates, tags, summaries, comments, and audit history for SOC triage.
+- **Operational Intel Health**: Collector health, ingestion history, IOC registry, CISA KEV/FIRST EPSS enrichment, and cross-source correlations.
 - **Context-Rich Threat Analysis**: Visual MITRE ATT&CK distribution and deep correlation mapping.
-- **Automated Notifications**: Slack, Microsoft Teams, Telegram, and n8n webhooks with customizable severity thresholds.
+- **Automated Notifications**: Slack, Microsoft Teams, Telegram, and n8n webhooks with customizable severity thresholds and JSON-based routing rules.
 - **Enterprise Architecture**: Built-in Nginx Reverse Proxy handles API routing (`/api` and `/auth`) transparently without cross-origin issues or SSL mixed-content errors.
 - **Dynamic Configuration**: UI-driven API key management with active validation status.
 
@@ -26,7 +28,7 @@ ThreatDock is designed to centralize and automate the workflow of Security Opera
 ## 🛠️ Tech Stack
 - **Frontend**: React.js, Lucide Icons, Vanilla CSS (Premium Dark/Light Themes), Nginx Reverse Proxy.
 - **Backend**: Node.js, Express.js.
-- **Storage**: SQLite (Lightweight, Portable, Persistent).
+- **Storage**: PostgreSQL 16 with host bind-mounted data under `./data/postgres`.
 - **Deployment**: Docker, Docker Compose.
 
 ---
@@ -52,6 +54,14 @@ docker-compose build --no-cache
 docker-compose up -d
 ```
 
+PostgreSQL data is persisted on the host at `./data/postgres`, not inside the backend container. To override the default database credentials, set `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` in the shell or a root-level Compose `.env` before starting the stack.
+
+### Migrating Existing SQLite Data
+If you are upgrading from the older SQLite deployment, stop the old backend, copy `/app/alerts.db` from the backend container to a host backup directory, start PostgreSQL, then run:
+```bash
+docker compose run --rm -v /opt/ThreatDock/data/sqlite-backup:/sqlite-backup:ro -e SQLITE_DB_PATH=/sqlite-backup/alerts.db backend npm run migrate:postgres
+```
+
 ### 4. Access
 - **Unified Dashboard & API**: `http://localhost:3000` (Routed by Nginx)
 - The frontend proxy will automatically route `/api/*` and `/auth/*` requests internally to the backend.
@@ -65,6 +75,8 @@ docker-compose up -d
 | **ThreatFox** | IOCs | Real-time malware indicators. |
 | **MISP** | Threat Intel | Community-driven threat sharing. |
 | **NVD / GitHub** | CVEs | Vulnerability data and security advisories. |
+| **CISA KEV / FIRST EPSS** | Exploit Prioritization | Known exploited vulnerability and exploit-probability enrichment. |
+| **BreachDirectory (RapidAPI)** | Credential Exposure | Credential breach lookup for Digital Risk workflows. |
 | **IntelOwl** | Analysis | Comprehensive malware & file analysis. |
 
 ---

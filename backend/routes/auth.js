@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { generateSecret, generateURI, verifySync } = require('otplib');
 const qrcode = require('qrcode');
 const { exchangeCodeForToken, getUserInfo } = require('../services/oauth');
+const settingsStore = require('../services/settingsStore');
 
 const router = express.Router();
 
@@ -19,14 +20,7 @@ const verifyMfaCode = (code, secret) => {
 
 // Helper to get settings from DB
 const getSettings = (db) => {
-  return new Promise((resolve, reject) => {
-    db.all('SELECT key, value FROM settings', [], (err, rows) => {
-      if (err) return reject(err);
-      const settings = {};
-      rows.forEach(r => { settings[r.key] = r.value; });
-      resolve(settings);
-    });
-  });
+  return settingsStore.getSettings(db);
 };
 
 function isValidIssuerUrl(url) {

@@ -30,9 +30,9 @@ module.exports = function createVendorsRouter(db) {
 
       const keyword = `%${vendor.name}%`;
       db.all(
-        `SELECT id, source, externalId, title, severity, date, url
+        `SELECT id, source, "externalId", title, severity, date, url
          FROM alerts
-         WHERE lower(title) LIKE lower(?) OR lower(externalId) LIKE lower(?) OR lower(source) LIKE lower(?)
+         WHERE lower(title) LIKE lower(?) OR lower("externalId") LIKE lower(?) OR lower(source) LIKE lower(?)
          ORDER BY CASE severity
            WHEN 'Critical' THEN 1
            WHEN 'High' THEN 2
@@ -44,6 +44,11 @@ module.exports = function createVendorsRouter(db) {
         (alertErr, alerts) => {
           if (alertErr) return res.status(500).json({ error: alertErr.message });
 
+          const enrichedAlerts = alerts.map(a => ({
+            ...a,
+            tprm_context: `Intelligence match: ${a.source} reported risk matching ${vendor.name}`
+          }));
+
           const score = Math.min(100, alerts.reduce((acc, alert) => {
             if (alert.severity === 'Critical') return acc + 20;
             if (alert.severity === 'High') return acc + 12;
@@ -51,14 +56,14 @@ module.exports = function createVendorsRouter(db) {
             if (alert.severity === 'Low') return acc + 2;
             return acc + 1;
           }, 0));
-          const notes = `Automated assessment found ${alerts.length} related alert(s) for "${vendor.name}".`;
+          const notes = `Assessment found ${alerts.length} direct intelligence matches for "${vendor.name}" across security feeds.`;
 
           db.run(
-            `UPDATE vendors SET risk_score = ?, last_assessment = datetime('now'), notes = ? WHERE id = ?`,
+            `UPDATE vendors SET risk_score = ?, last_assessment = CURRENT_TIMESTAMP, notes = ? WHERE id = ?`,
             [score, notes, vendor.id],
             (updateErr) => {
               if (updateErr) return res.status(500).json({ error: updateErr.message });
-              res.json({ id: vendor.id, risk_score: score, notes, matches: alerts });
+              res.json({ id: vendor.id, risk_score: score, notes, matches: enrichedAlerts });
             }
           );
         }

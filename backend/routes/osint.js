@@ -1,15 +1,10 @@
 const express = require('express');
 const axios = require('axios');
+const settingsStore = require('../services/settingsStore');
+const osintService = require('../services/osint');
 
 function getSettings(db) {
-  return new Promise((resolve, reject) => {
-    db.all('SELECT key, value FROM settings', [], (err, rows) => {
-      if (err) return reject(err);
-      const settings = {};
-      rows.forEach(r => { settings[r.key] = r.value; });
-      resolve(settings);
-    });
-  });
+  return settingsStore.getSettings(db);
 }
 
 function uniqueBy(items, keyFn) {
@@ -20,31 +15,6 @@ function uniqueBy(items, keyFn) {
     seen.add(key);
     return true;
   });
-}
-
-function buildHeaders(key, name) {
-  return key ? { [name]: key } : {};
-}
-
-function saveFindings(db, category, keyword, results) {
-  const stmt = db.prepare(`
-    INSERT INTO osint_findings (category, keyword, provider, type, title, severity, date, url, description, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `);
-  results.slice(0, 200).forEach(item => {
-    stmt.run(
-      category,
-      keyword,
-      item.provider || '',
-      item.type || '',
-      item.title || '',
-      item.severity || 'Unknown',
-      item.date || '',
-      item.url || '',
-      item.description || ''
-    );
-  });
-  stmt.finalize();
 }
 
 module.exports = function createOsintRouter(db) {
@@ -82,32 +52,55 @@ module.exports = function createOsintRouter(db) {
       const otxKey = settings.OTX_API_KEY || process.env.OTX_API_KEY;
       const urlscanKey = settings.URLSCAN_API_KEY || process.env.URLSCAN_API_KEY;
 
-      const hibpKey = settings.HIBP_API_KEY || process.env.HIBP_API_KEY;
-      if (hibpKey && keyword.includes('@')) {
-        providers.push('Have I Been Pwned');
+      const breachDirectoryKey = settings.BREACHDIRECTORY_RAPIDAPI_KEY || process.env.BREACHDIRECTORY_RAPIDAPI_KEY;
+      const breachDirectoryHost = settings.BREACHDIRECTORY_RAPIDAPI_HOST || process.env.BREACHDIRECTORY_RAPIDAPI_HOST || 'breachdirectory.p.rapidapi.com';
+      if (breachDirectoryKey) {
+        providers.push('BreachDirectory');
         try {
-          const response = await axios.get(`https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(keyword)}`, {
+          const response = await axios.get(`https://${breachDirectoryHost}/`, {
             headers: {
-              'hibp-api-key': hibpKey,
+              'x-rapidapi-key': breachDirectoryKey,
+              'x-rapidapi-host': breachDirectoryHost,
               'User-Agent': 'ThreatDock'
             },
-            params: { truncateResponse: false },
-            timeout: 10000,
-            validateStatus: status => [200, 404].includes(status)
+            params: { func: 'auto', term: keyword },
+            timeout: 12000,
+            validateStatus: status => status >= 200 && status < 500
           });
-          if (response.status === 200 && Array.isArray(response.data)) {
-            response.data.forEach(item => results.push({
-              provider: 'Have I Been Pwned',
+
+          const data = response.data || {};
+          const rawRecords = Array.isArray(data.result) ? data.result
+            : Array.isArray(data.results) ? data.results
+            : Array.isArray(data.data) ? data.data
+            : Array.isArray(data.sources) ? data.sources.map(source => ({ sources: [source] }))
+            : data.found || data.success ? [data] : [];
+
+          rawRecords.forEach((item, index) => {
+            const sources = Array.isArray(item.sources) ? item.sources.join(', ')
+              : Array.isArray(item.source) ? item.source.join(', ')
+              : item.sources || item.source || item.database || item.name || 'breach directory';
+            const hasSecretMaterial = Boolean(item.password || item.hash || item.sha1 || item.has_password);
+            results.push({
+              provider: 'BreachDirectory',
               type: 'Credential Breach',
-              title: item.Title || item.Name,
-              severity: item.IsVerified === false ? 'Medium' : 'High',
-              date: item.BreachDate,
-              url: item.Domain ? `https://${item.Domain}` : 'https://haveibeenpwned.com/',
-              description: item.Description ? item.Description.replace(/<[^>]+>/g, '') : ''
-            }));
+              title: `${keyword} found in ${sources || `breach record #${index + 1}`}`,
+              severity: hasSecretMaterial ? 'High' : 'Medium',
+              date: item.date || item.breach_date || new Date().toISOString(),
+              url: 'https://rapidapi.com/Emi-K/api/breachdirectory',
+              description: `BreachDirectory returned a match. Sources: ${sources}. Password/hash details are intentionally not stored by ThreatDock.`
+            });
+          });
+          if (rawRecords.length === 0 && response.status !== 404) {
+            results.push({
+              provider: 'BreachDirectory',
+              type: 'Credential Breach',
+              severity: 'Low',
+              title: `No BreachDirectory match for "${keyword}"`,
+              description: 'The provider responded successfully but did not return breach records.'
+            });
           }
         } catch (err) {
-          results.push({ provider: 'Have I Been Pwned', type: 'Provider Error', severity: 'Low', title: err.message });
+          results.push({ provider: 'BreachDirectory', type: 'Provider Error', severity: 'Low', title: err.message });
         }
       }
 
@@ -166,7 +159,7 @@ module.exports = function createOsintRouter(db) {
       providers.push('URLScan.io');
       try {
         const response = await axios.get('https://urlscan.io/api/v1/search/', {
-          headers: buildHeaders(urlscanKey, 'API-Key'),
+          headers: (urlscanKey ? { 'API-Key': urlscanKey } : {}),
           params: { q: keyword, size: 25 },
           timeout: 10000
         });
@@ -184,9 +177,9 @@ module.exports = function createOsintRouter(db) {
       }
 
       db.all(
-        `SELECT source, externalId, title, severity, date, url
+        `SELECT source, "externalId", title, severity, date, url
          FROM alerts
-         WHERE lower(title) LIKE lower(?) OR lower(externalId) LIKE lower(?)
+         WHERE lower(title) LIKE lower(?) OR lower("externalId") LIKE lower(?)
          ORDER BY date DESC
          LIMIT 50`,
         [`%${keyword}%`, `%${keyword}%`],
@@ -203,14 +196,14 @@ module.exports = function createOsintRouter(db) {
           }));
 
           const uniqueResults = uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`);
-          saveFindings(db, 'digital-risk', keyword, uniqueResults);
+          osintService.saveFindings(db, 'digital-risk', keyword, uniqueResults);
           res.json({
             keyword,
             providers,
             results: uniqueResults,
             notes: [
               'Free/community coverage uses URLScan.io and AlienVault OTX API keys for internet and threat-intel mentions.',
-              'Credential and dark-web breach depth improves with HIBP_API_KEY and INTELX_API_KEY; without keys, results are limited to public/community sources and local alerts.'
+              'Credential breach depth uses BREACHDIRECTORY_RAPIDAPI_KEY from RapidAPI and INTELX_API_KEY; without keys, results are limited to public/community sources and local alerts.'
             ]
           });
         }
@@ -225,131 +218,16 @@ module.exports = function createOsintRouter(db) {
     if (!brand) return res.status(400).json({ error: 'Brand, domain, or product keyword is required' });
 
     try {
-      const normalizedDomain = brand.includes('.') ? brand : null;
-      const settings = await getSettings(db);
-      const results = [];
-      const otxKey = settings.OTX_API_KEY || process.env.OTX_API_KEY;
-      const urlscanKey = settings.URLSCAN_API_KEY || process.env.URLSCAN_API_KEY;
-      const vtKey = settings.VIRUSTOTAL_API_KEY || process.env.VIRUSTOTAL_API_KEY;
-      if (normalizedDomain) {
-        try {
-          const crtResponse = await axios.get(`https://crt.sh/?q=${encodeURIComponent(normalizedDomain)}&output=json`, {
-            timeout: 10000,
-            validateStatus: status => status >= 200 && status < 500
-          });
-          if (Array.isArray(crtResponse.data)) {
-            uniqueBy(crtResponse.data, row => row.name_value)
-              .slice(0, 100)
-              .forEach(row => results.push({
-                provider: 'crt.sh',
-                type: 'Certificate Transparency',
-                title: row.name_value,
-                severity: row.name_value && row.name_value.includes('*') ? 'Low' : 'Medium',
-                date: row.entry_timestamp,
-                url: `https://crt.sh/?id=${row.id}`,
-                description: row.issuer_name
-              }));
-          }
-        } catch (err) {
-          results.push({ provider: 'crt.sh', type: 'Provider Error', severity: 'Low', title: err.message });
-        }
-      }
-
-      try {
-        const response = await axios.get('https://urlscan.io/api/v1/search/', {
-          headers: buildHeaders(urlscanKey, 'API-Key'),
-          params: { q: normalizedDomain ? `domain:${normalizedDomain}` : brand, size: 50 },
-          timeout: 10000
-        });
-        (response.data.results || []).forEach(item => results.push({
-          provider: 'URLScan.io',
-          type: item.verdicts && item.verdicts.overall && item.verdicts.overall.malicious ? 'Suspicious Brand Exposure' : 'Brand / Domain Observation',
-          title: (item.page && (item.page.url || item.page.domain)) || `URLScan result for ${brand}`,
-          severity: item.verdicts && item.verdicts.overall && item.verdicts.overall.malicious ? 'High' : 'Low',
-          date: item.task && item.task.time,
-          url: item.result || (item.task && item.task.url),
-          description: item.page && item.page.ip
-        }));
-      } catch (err) {
-        results.push({ provider: 'URLScan.io', type: 'Provider Error', severity: 'Low', title: err.message });
-      }
-
-      if (otxKey) {
-        try {
-          const response = await axios.get('https://otx.alienvault.com/api/v1/search/pulses', {
-            headers: { 'X-OTX-API-KEY': otxKey },
-            params: { q: brand, limit: 20 },
-            timeout: 10000
-          });
-          (response.data.results || []).forEach(pulse => results.push({
-            provider: 'AlienVault OTX',
-            type: 'Threat Intel Brand Mention',
-            title: pulse.name || `OTX pulse for ${brand}`,
-            severity: pulse.indicator_count > 10 ? 'High' : 'Medium',
-            date: pulse.modified || pulse.created,
-            url: pulse.id ? `https://otx.alienvault.com/pulse/${pulse.id}` : 'https://otx.alienvault.com/',
-            description: pulse.description || ''
-          }));
-        } catch (err) {
-          results.push({ provider: 'AlienVault OTX', type: 'Provider Error', severity: 'Low', title: err.message });
-        }
-      }
-
-      if (vtKey && normalizedDomain) {
-        try {
-          const response = await axios.get(`https://www.virustotal.com/api/v3/domains/${encodeURIComponent(normalizedDomain)}`, {
-            headers: { 'x-apikey': vtKey },
-            timeout: 10000
-          });
-          const attrs = response.data.data && response.data.data.attributes;
-          if (attrs) {
-            const malicious = attrs.last_analysis_stats && attrs.last_analysis_stats.malicious;
-            results.push({
-              provider: 'VirusTotal Community',
-              type: 'Domain Reputation',
-              title: `${normalizedDomain} reputation: ${malicious || 0} malicious engine(s)`,
-              severity: malicious > 0 ? 'High' : 'Low',
-              date: attrs.last_modification_date ? new Date(attrs.last_modification_date * 1000).toISOString() : undefined,
-              url: `https://www.virustotal.com/gui/domain/${encodeURIComponent(normalizedDomain)}`,
-              description: attrs.reputation !== undefined ? `Reputation: ${attrs.reputation}` : ''
-            });
-          }
-        } catch (err) {
-          results.push({ provider: 'VirusTotal Community', type: 'Provider Error', severity: 'Low', title: err.message });
-        }
-      }
-
-      db.all(
-        `SELECT source, externalId, title, severity, date, url
-         FROM alerts
-         WHERE lower(title) LIKE lower(?) OR lower(url) LIKE lower(?)
-         ORDER BY date DESC
-         LIMIT 50`,
-        [`%${brand}%`, `%${brand}%`],
-        (err, rows) => {
-          if (err) return res.status(500).json({ error: err.message });
-          rows.forEach(row => results.push({
-            provider: row.source,
-            type: 'Brand Mention',
-            title: row.title,
-            severity: row.severity || 'Unknown',
-            date: row.date,
-            url: row.url,
-            description: row.externalId
-          }));
-
-          const uniqueResults = uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`);
-          saveFindings(db, 'brand-exposure', brand, uniqueResults);
-          res.json({
-            brand,
-            results: uniqueResults,
-            notes: [
-              'Free/community coverage uses crt.sh, URLScan.io, AlienVault OTX, and VirusTotal Community.',
-              'Use URLSCAN_API_KEY, OTX_API_KEY, and VIRUSTOTAL_API_KEY in Settings for richer brand exposure data.'
-            ]
-          });
-        }
-      );
+      const results = await osintService.searchBrandExposure(db, brand);
+      osintService.saveFindings(db, 'brand-exposure', brand, results);
+      res.json({
+        brand,
+        results,
+        notes: [
+          'Free/community coverage uses crt.sh, URLScan.io, AlienVault OTX, and VirusTotal Community.',
+          'Use URLSCAN_API_KEY, OTX_API_KEY, and VIRUSTOTAL_API_KEY in Settings for richer brand exposure data.'
+        ]
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -357,3 +235,4 @@ module.exports = function createOsintRouter(db) {
 
   return router;
 };
+

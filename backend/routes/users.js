@@ -12,6 +12,14 @@ module.exports = function(db) {
     return res.status(403).json({ error: 'Requires Admin role' });
   };
 
+  // GET /api/users/list/simple (Accessible by Analysts for Assignee selection)
+  router.get('/list/simple', (req, res) => {
+    db.all('SELECT username FROM users ORDER BY username ASC', [], (err, rows) => {
+      if (err) return res.status(500).json({ error: 'Database error' });
+      res.json(rows.map(r => r.username));
+    });
+  });
+
   // GET /api/users
   router.get('/', requireAdmin, (req, res) => {
     db.all('SELECT id, username, email, role, mfa_enabled, created_at FROM users', [], (err, rows) => {

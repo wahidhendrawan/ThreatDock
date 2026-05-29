@@ -25,14 +25,45 @@ const severityOrder = {
   Unknown: 0
 };
 
+function parseNotificationRules() {
+  try {
+    const rules = JSON.parse(process.env.NOTIFICATION_RULES || '[]');
+    return Array.isArray(rules) ? rules.filter(rule => rule && rule.enabled !== false) : [];
+  } catch {
+    return [];
+  }
+}
+
+function matchesRule(alert, rule, channel) {
+  if (rule.channel && rule.channel !== 'all' && rule.channel !== channel) return false;
+  const minSeverity = rule.severity || process.env.NOTIFY_THRESHOLD || 'High';
+  if ((severityOrder[alert.severity] || 0) < (severityOrder[minSeverity] || 1)) return false;
+  if (rule.source && String(alert.source || '') !== String(rule.source)) return false;
+  if (rule.status && String(alert.status || '') !== String(rule.status)) return false;
+  if (rule.priority && String(alert.priority || '') !== String(rule.priority)) return false;
+  if (rule.contains) {
+    const haystack = `${alert.title || ''} ${alert.externalId || ''} ${alert.url || ''}`.toLowerCase();
+    if (!haystack.includes(String(rule.contains).toLowerCase())) return false;
+  }
+  return true;
+}
+
+function selectAlerts(alerts, channel) {
+  const rules = parseNotificationRules();
+  if (rules.length > 0) {
+    return alerts.filter(alert => rules.some(rule => matchesRule(alert, rule, channel)));
+  }
+  const threshold = process.env.NOTIFY_THRESHOLD || 'High';
+  const thresholdValue = severityOrder[threshold] || 1;
+  return alerts.filter(a => severityOrder[a.severity] >= thresholdValue);
+}
+
 async function sendSlackNotifications(alerts) {
   const webhook = process.env.SLACK_WEBHOOK_URL;
   if (!webhook) {
     return;
   }
-  const threshold = process.env.NOTIFY_THRESHOLD || 'High';
-  const thresholdValue = severityOrder[threshold] || 1;
-  const messages = alerts.filter(a => severityOrder[a.severity] >= thresholdValue);
+  const messages = selectAlerts(alerts, 'slack');
   if (messages.length === 0) return;
   try {
     for (const alert of messages) {
@@ -51,9 +82,7 @@ async function sendN8nWebhook(alerts) {
   if (!webhook) {
     return;
   }
-  const threshold = process.env.NOTIFY_THRESHOLD || 'High';
-  const thresholdValue = severityOrder[threshold] || 1;
-  const messages = alerts.filter(a => severityOrder[a.severity] >= thresholdValue);
+  const messages = selectAlerts(alerts, 'n8n');
   if (messages.length === 0) return;
   try {
     // Send array of alerts to n8n webhook
@@ -69,9 +98,7 @@ async function sendTelegramNotifications(alerts) {
   if (!token || !chatId) {
     return;
   }
-  const threshold = process.env.NOTIFY_THRESHOLD || 'High';
-  const thresholdValue = severityOrder[threshold] || 1;
-  const messages = alerts.filter(a => severityOrder[a.severity] >= thresholdValue);
+  const messages = selectAlerts(alerts, 'telegram');
   if (messages.length === 0) return;
   try {
     for (const alert of messages) {
@@ -92,9 +119,7 @@ async function sendTeamsWebhook(alerts) {
   if (!webhook) {
     return;
   }
-  const threshold = process.env.NOTIFY_THRESHOLD || 'High';
-  const thresholdValue = severityOrder[threshold] || 1;
-  const messages = alerts.filter(a => severityOrder[a.severity] >= thresholdValue);
+  const messages = selectAlerts(alerts, 'teams');
   if (messages.length === 0) return;
   try {
     for (const alert of messages) {
