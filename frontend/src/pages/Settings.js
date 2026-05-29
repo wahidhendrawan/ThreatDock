@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Shield, Globe, Eye, Bell, Wifi, Users, Save, Plus, Trash2, Edit, Key, CheckCircle, AlertCircle } from 'lucide-react';
+import { Lock, Shield, Globe, Eye, Bell, Wifi, Users, Save, Plus, Trash2, Edit, Key, CheckCircle, AlertCircle, Activity } from 'lucide-react';
 
 export default function Settings({ authData }) {
   const [activeTab, setActiveTab] = useState('auth');
@@ -244,10 +244,29 @@ export default function Settings({ authData }) {
     { id: 'threat',  label: 'Threat Intelligence APIs', icon: Shield },
     { id: 'asset',   label: 'Asset & Exposure APIs',    icon: Globe },
     { id: 'risk',    label: 'Digital Risk APIs',         icon: Eye },
+    { id: 'rules',   label: 'Risk & Rules',              icon: Shield },
     { id: 'notify',  label: 'Notifications',             icon: Bell },
     { id: 'network', label: 'Network',                   icon: Wifi },
     { id: 'users',   label: 'User Management',           icon: Users },
   ];
+
+  const monitoredBrands = (() => {
+    try {
+      return JSON.parse(settings?.MONITORED_BRANDS || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const handleAddBrand = (brand) => {
+    const next = [...new Set([...monitoredBrands, brand.trim().toLowerCase()])].filter(Boolean);
+    setSettings({ ...settings, MONITORED_BRANDS: JSON.stringify(next) });
+  };
+
+  const handleRemoveBrand = (brand) => {
+    const next = monitoredBrands.filter(b => b !== brand);
+    setSettings({ ...settings, MONITORED_BRANDS: JSON.stringify(next) });
+  };
 
   if (!settings && !msg.text) return <div className="card">Loading settings...</div>;
 
@@ -526,6 +545,84 @@ export default function Settings({ authData }) {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
+           TAB 3.5 — Brand Monitoring
+         ═══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'brand' && settings && (
+        <div className="card">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <Globe size={20} /> Brand Monitoring
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
+              Specify brands, domains, or products to monitor for external exposure and impersonation.
+            </p>
+          </div>
+
+          <div style={{ marginBottom: '2rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+              <input 
+                type="text" 
+                id="new-brand-input"
+                className="form-input" 
+                style={{ flex: 1 }}
+                placeholder="e.g. acme.com, brand-name, product-xyz" 
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleAddBrand(e.target.value);
+                    e.target.value = '';
+                  }
+                }}
+              />
+              <button 
+                className="btn btn-primary"
+                onClick={() => {
+                  const input = document.getElementById('new-brand-input');
+                  handleAddBrand(input.value);
+                  input.value = '';
+                }}
+              >
+                <Plus size={16} /> Add Brand
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {monitoredBrands.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)' }}>
+                  No brands configured for automated monitoring.
+                </div>
+              ) : (
+                monitoredBrands.map(brand => (
+                  <div key={brand} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <Globe size={16} style={{ color: 'var(--primary-color)' }} />
+                      <span style={{ fontWeight: 600 }}>{brand}</span>
+                    </div>
+                    <button 
+                      className="btn btn-danger" 
+                      style={{ padding: '0.25rem 0.5rem' }}
+                      onClick={() => handleRemoveBrand(brand)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveSettings}>
+            <div style={{ padding: '1rem', background: 'rgba(59, 130, 246, 0.05)', borderRadius: '8px', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+              <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--primary-color)' }}>
+                <Activity size={14} /> Automated Ingestion
+              </h4>
+              ThreatDock will automatically scan these brands for exposure across Certificate Transparency (crt.sh), URLScan.io, AlienVault OTX, and VirusTotal during the hourly background ingestion cycle.
+            </div>
+            <button type="submit" className="btn btn-primary"><Save size={16} /> Save Monitored Brands</button>
+          </form>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
            TAB 4 — Digital Risk APIs
          ═══════════════════════════════════════════════════════════════ */}
       {activeTab === 'risk' && settings && (
@@ -541,18 +638,80 @@ export default function Settings({ authData }) {
 
           <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
             <ApiKeyField
-              label="Have I Been Pwned API Key"
-              description="Check if employee or corporate email addresses appear in known data breaches."
-              settingKey="HIBP_API_KEY"
+              label="BreachDirectory RapidAPI Key"
+              description="RapidAPI key for BreachDirectory credential exposure lookup."
+              settingKey="BREACHDIRECTORY_RAPIDAPI_KEY"
+              placeholder="RapidAPI application key"
             />
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <StatusDot value={settings.BREACHDIRECTORY_RAPIDAPI_HOST} />
+                BreachDirectory RapidAPI Host
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                value={settings.BREACHDIRECTORY_RAPIDAPI_HOST || 'breachdirectory.p.rapidapi.com'}
+                onChange={(e) => setSettings({ ...settings, BREACHDIRECTORY_RAPIDAPI_HOST: e.target.value })}
+                placeholder="breachdirectory.p.rapidapi.com"
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                RapidAPI host header used by the BreachDirectory API.
+              </span>
+            </div>
             <ApiKeyField
               label="Intelligence X API Key"
               description="Search leaked databases, dark web pastes, and historical data for identity exposure."
               settingKey="INTELX_API_KEY"
             />
-
             <div style={{ marginTop: '1rem' }}>
               <button type="submit" className="btn btn-primary"><Save size={16} /> Save Configuration</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+           Risk Scoring & Notification Rules
+         ═══════════════════════════════════════════════════════════════ */}
+      {activeTab === 'rules' && settings && (
+        <div className="card">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <Shield size={20} /> Risk Scoring & Rules
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: 0 }}>
+              Tune vulnerability scoring weights and granular notification routing rules.
+            </p>
+          </div>
+
+          <form onSubmit={handleSaveSettings} className="grid grid-cols-1 gap-4">
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label">Risk Weights JSON</label>
+              <textarea
+                className="form-input"
+                rows="9"
+                value={settings.RISK_WEIGHTS || '{}'}
+                onChange={(e) => setSettings({ ...settings, RISK_WEIGHTS: e.target.value })}
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Keys supported by prioritization include kev, epssHigh, epssMedium, exposedService, assetCriticality, and vendorRiskDivisor.
+              </span>
+            </div>
+            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label">Notification Rules JSON</label>
+              <textarea
+                className="form-input"
+                rows="10"
+                value={settings.NOTIFICATION_RULES || '[]'}
+                onChange={(e) => setSettings({ ...settings, NOTIFICATION_RULES: e.target.value })}
+              />
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Example: {`[{"enabled":true,"channel":"slack","severity":"Critical","source":"NVD","contains":"CVE"}]`}.
+              </span>
+            </div>
+            <div style={{ marginTop: '1rem' }}>
+              <button type="submit" className="btn btn-primary"><Save size={16} /> Save Rules</button>
             </div>
           </form>
         </div>

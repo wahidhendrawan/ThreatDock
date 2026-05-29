@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 import Layout from './components/Layout';
 import Filters from './components/Filters';
@@ -8,11 +8,22 @@ import Stats from './components/Stats';
 import { 
   ThreatHunting, AssetDiscovery, ExposureMonitoring, AssetIntelligence, 
   VulnPrioritization, PredictiveIntel, ThreatAnalysis, DigitalRisk, 
-  BrandExposure, ThirdPartyRisk 
+  BrandExposure, ThirdPartyRisk, IntelOperations, DnsImpersonation
 } from './pages/Modules';
 import Settings from './pages/Settings';
 
 const API_BASE = '';
+const ALERT_BACKED_ROUTES = new Set([
+  '/',
+  '/alerts',
+  '/exposure',
+  '/intel',
+  '/prioritization',
+  '/predictive',
+  '/analysis',
+  '/digital-risk',
+  '/brand'
+]);
 
 // Helper to build auth headers from authData
 function getAuthHeaders(authData) {
@@ -27,7 +38,7 @@ function getAuthHeaders(authData) {
 }
 
 // Dashboard component
-function Dashboard({ alerts }) {
+function Dashboard({ alerts, authData }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
@@ -36,12 +47,12 @@ function Dashboard({ alerts }) {
           <p className="page-subtitle">Security Operations & Threat Intel Metrics</p>
         </div>
       </div>
-      <Stats alerts={alerts} />
+      <Stats alerts={alerts} authData={authData} />
     </div>
   );
 }
 
-function AlertsPage({ alerts, filters, handlers }) {
+function AlertsPage({ alerts, filters, handlers, authData }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
@@ -56,13 +67,19 @@ function AlertsPage({ alerts, filters, handlers }) {
       </div>
       <div className="card">
         <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Results ({alerts.length})</h2>
-        <AlertList alerts={alerts} onStatusChange={handlers.handleStatusChange} />
+        <AlertList
+          alerts={alerts}
+          authData={authData}
+          onStatusChange={handlers.handleStatusChange}
+          onAlertUpdate={handlers.handleAlertUpdate}
+        />
       </div>
     </div>
   );
 }
 
 function AppContent() {
+  const location = useLocation();
   const [alerts, setAlerts] = useState([]);
   const [severityFilter, setSeverityFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
@@ -71,6 +88,7 @@ function AppContent() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(true);
+  const shouldFetchAlerts = ALERT_BACKED_ROUTES.has(location.pathname);
 
   // Authentication State
   const [authData, setAuthData] = useState(() => {
@@ -193,22 +211,29 @@ function AppContent() {
   }, [severityFilter, sourceFilter, statusFilter, startDate, endDate, authData]);
 
   useEffect(() => {
-    if (authData) {
+    if (authData && shouldFetchAlerts) {
       fetchAlerts();
     }
-  }, [fetchAlerts, authData]);
+  }, [fetchAlerts, authData, shouldFetchAlerts]);
 
   const handleStatusChange = (id, newStatus) => {
+    handleAlertUpdate(id, { status: newStatus });
+  };
+
+  const handleAlertUpdate = (id, patch) => {
     const headers = { 'Content-Type': 'application/json', ...getAuthHeaders(authData) };
 
     fetch(`${API_BASE}/api/alerts/${id}`, {
       method: 'PATCH',
       headers,
-      body: JSON.stringify({ status: newStatus })
+      body: JSON.stringify(patch)
     })
-      .then(res => res.json())
-      .then(() => {
-        setAlerts(prev => prev.map(a => (a.id === id ? { ...a, status: newStatus } : a)));
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+        return res.json();
+      })
+      .then(updated => {
+        setAlerts(prev => prev.map(a => (a.id === id ? { ...a, ...updated } : a)));
       })
       .catch(console.error);
   };
@@ -468,17 +493,19 @@ function AppContent() {
   return (
     <Layout user={authData?.user} onLogout={handleLogout}>
       <Routes>
-        <Route path="/" element={<Dashboard alerts={filteredAlerts} />} />
-        <Route path="/alerts" element={<AlertsPage alerts={filteredAlerts} filters={filtersProps} handlers={{ handleStatusChange }} />} />
+        <Route path="/" element={<Dashboard alerts={filteredAlerts} authData={authData} />} />
+        <Route path="/alerts" element={<AlertsPage alerts={filteredAlerts} filters={filtersProps} authData={authData} handlers={{ handleStatusChange, handleAlertUpdate }} />} />
         <Route path="/hunting" element={<ThreatHunting authData={authData} />} />
+        <Route path="/operations" element={<IntelOperations authData={authData} />} />
         <Route path="/assets" element={<AssetDiscovery authData={authData} />} />
         <Route path="/exposure" element={<ExposureMonitoring alerts={filteredAlerts} />} />
         <Route path="/intel" element={<AssetIntelligence alerts={filteredAlerts} authData={authData} />} />
         <Route path="/prioritization" element={<VulnPrioritization alerts={filteredAlerts} authData={authData} />} />
-        <Route path="/predictive" element={<PredictiveIntel alerts={filteredAlerts} />} />
+        <Route path="/predictive" element={<PredictiveIntel alerts={filteredAlerts} authData={authData} />} />
         <Route path="/analysis" element={<ThreatAnalysis alerts={filteredAlerts} authData={authData} />} />
         <Route path="/digital-risk" element={<DigitalRisk alerts={filteredAlerts} authData={authData} />} />
-        <Route path="/brand" element={<BrandExposure alerts={filteredAlerts} authData={authData} />} />
+        <Route path="/brand" element={<BrandExposure authData={authData} />} />
+        <Route path="/dns-impersonation" element={<DnsImpersonation authData={authData} />} />
         <Route path="/third-party" element={<ThirdPartyRisk authData={authData} />} />
         <Route path="/settings" element={<Settings authData={authData} />} />
         <Route path="*" element={<Navigate to="/" replace />} />

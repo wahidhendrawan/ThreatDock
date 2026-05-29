@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
 const githubService = require('./services/github');
@@ -13,9 +12,14 @@ const mispService = require('./services/misp');
 const intelOwlService = require('./services/intelowl');
 const yaraSigmaService = require('./services/yaraSigma');
 const notificationService = require('./services/notifications');
+const intelligenceService = require('./services/intelligence');
+const settingsStore = require('./services/settingsStore');
+const dbUtil = require('./services/db');
+const { createDatabase, initializeDatabase } = require('./services/database');
 
 const authMiddleware = require('./middleware/auth');
 const rssService = require('./services/rss');
+const osintService = require('./services/osint');
 
 const app = express();
 const PORT = process.env.PORT || 5002;
@@ -28,10 +32,8 @@ app.use(express.json());
 
 app.disable('x-powered-by');
 
-// Initialize SQLite database
-const dbPath = process.env.DB_PATH || 'alerts.db';
-const db = new sqlite3.Database(dbPath);
-const bcrypt = require('bcryptjs');
+// Initialize PostgreSQL database adapter
+const db = createDatabase();
 
 app.use((req, res, next) => {
   req.db = db;
@@ -40,179 +42,8 @@ app.use((req, res, next) => {
 
 // Remove global authMiddleware here
 
-// Create alerts table if it does not exist with UNIQUE constraint for upserts
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS alerts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT,
-    externalId TEXT,
-    title TEXT,
-    severity TEXT,
-    date TEXT,
-    url TEXT,
-    status TEXT DEFAULT 'Open',
-    attack_phase TEXT DEFAULT 'Unknown',
-    UNIQUE(source, externalId)
-  )`);
-
-  // Assets table for External Asset Discovery
-  db.run(`CREATE TABLE IF NOT EXISTS assets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    domain TEXT,
-    ip TEXT,
-    port INTEGER,
-    service TEXT,
-    tech_stack TEXT,
-    status TEXT DEFAULT 'Active',
-    risk_score INTEGER DEFAULT 0,
-    last_seen TEXT,
-    notes TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(domain, ip, port)
-  )`);
-
-  // Hunt queries log for Threat Hunting
-  db.run(`CREATE TABLE IF NOT EXISTS hunt_queries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    query_type TEXT,
-    query_value TEXT,
-    results TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    user TEXT
-  )`);
-
-  // Vendors table for Third-Party Risk
-  db.run(`CREATE TABLE IF NOT EXISTS vendors (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE,
-    category TEXT,
-    risk_score INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'Active',
-    contact TEXT,
-    last_assessment TEXT,
-    notes TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS osint_findings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category TEXT,
-    keyword TEXT,
-    provider TEXT,
-    type TEXT,
-    title TEXT,
-    severity TEXT,
-    date TEXT,
-    url TEXT,
-    description TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  )`);
-
-  // Settings table for dynamic configuration
-  db.run(`CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT,
-    updated_at TEXT DEFAULT (datetime('now'))
-  )`);
-
-  // Users table for local auth and role management
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE,
-    password_hash TEXT,
-    email TEXT,
-    role TEXT DEFAULT 'Analyst',
-    mfa_secret TEXT,
-    mfa_enabled INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  )`);
-});
-
-// Seed default settings and user if they don't exist
-db.serialize(() => {
-  db.get("SELECT COUNT(*) AS count FROM settings", (err, row) => {
-    const ensureSetting = (key, value) => {
-      db.run(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-        [key, value]
-      );
-    };
-
-    if (!err && row.count === 0) {
-      const defaultSettings = [
-        ['OIDC_ISSUER_URL', process.env.OIDC_ISSUER_URL || ''],
-        ['OIDC_CLIENT_ID', process.env.OIDC_CLIENT_ID || ''],
-        ['OIDC_CLIENT_SECRET', process.env.OIDC_CLIENT_SECRET || ''],
-        ['FRONTEND_URL', process.env.FRONTEND_URL || 'http://localhost:3000'],
-        ['JWT_SECRET', process.env.JWT_SECRET || 'super_secret_threatdock_jwt_key_12345'],
-        ['SSO_ENABLED', process.env.OIDC_ISSUER_URL ? 'true' : 'false'],
-        ['MFA_REQUIRED', 'false'],
-        ['ANALYST_MFA_REQUIRED', 'false'],
-        ['SECURITYTRAILS_API_KEY', process.env.SECURITYTRAILS_API_KEY || ''],
-        ['HIBP_API_KEY', process.env.HIBP_API_KEY || ''],
-        ['INTELX_API_KEY', process.env.INTELX_API_KEY || ''],
-        ['OTX_API_KEY', process.env.OTX_API_KEY || ''],
-        ['URLSCAN_API_KEY', process.env.URLSCAN_API_KEY || ''],
-        ['VIRUSTOTAL_API_KEY', process.env.VIRUSTOTAL_API_KEY || ''],
-        ['GITHUB_TOKEN', process.env.GITHUB_TOKEN || ''],
-        ['NVD_API_KEY', process.env.NVD_API_KEY || ''],
-        ['THREATFOX_AUTH_KEY', process.env.THREATFOX_AUTH_KEY || ''],
-        ['MISP_URL', process.env.MISP_URL || ''],
-        ['MISP_API_KEY', process.env.MISP_API_KEY || ''],
-        ['INTELO_OWL_API_KEY', process.env.INTELO_OWL_API_KEY || ''],
-        ['SLACK_WEBHOOK_URL', process.env.SLACK_WEBHOOK_URL || ''],
-        ['N8N_WEBHOOK_URL', process.env.N8N_WEBHOOK_URL || ''],
-        ['NOTIFY_THRESHOLD', process.env.NOTIFY_THRESHOLD || 'High'],
-        ['PUBLIC_DNS_SERVERS', process.env.PUBLIC_DNS_SERVERS || '1.1.1.1,8.8.8.8']
-      ];
-      const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
-      defaultSettings.forEach(s => stmt.run(s[0], s[1]));
-      stmt.finalize();
-    } else if (!err) {
-      ensureSetting('MFA_REQUIRED', 'false');
-      ensureSetting('ANALYST_MFA_REQUIRED', 'false');
-      ensureSetting('SECURITYTRAILS_API_KEY', process.env.SECURITYTRAILS_API_KEY || '');
-      ensureSetting('HIBP_API_KEY', process.env.HIBP_API_KEY || '');
-      ensureSetting('INTELX_API_KEY', process.env.INTELX_API_KEY || '');
-      ensureSetting('OTX_API_KEY', process.env.OTX_API_KEY || '');
-      ensureSetting('URLSCAN_API_KEY', process.env.URLSCAN_API_KEY || '');
-      ensureSetting('VIRUSTOTAL_API_KEY', process.env.VIRUSTOTAL_API_KEY || '');
-      ensureSetting('GITHUB_TOKEN', process.env.GITHUB_TOKEN || '');
-      ensureSetting('NVD_API_KEY', process.env.NVD_API_KEY || '');
-      ensureSetting('THREATFOX_AUTH_KEY', process.env.THREATFOX_AUTH_KEY || '');
-      ensureSetting('MISP_URL', process.env.MISP_URL || '');
-      ensureSetting('MISP_API_KEY', process.env.MISP_API_KEY || '');
-      ensureSetting('INTELO_OWL_API_KEY', process.env.INTELO_OWL_API_KEY || '');
-      ensureSetting('SLACK_WEBHOOK_URL', process.env.SLACK_WEBHOOK_URL || '');
-      ensureSetting('N8N_WEBHOOK_URL', process.env.N8N_WEBHOOK_URL || '');
-      ensureSetting('TELEGRAM_BOT_TOKEN', process.env.TELEGRAM_BOT_TOKEN || '');
-      ensureSetting('TELEGRAM_CHAT_ID', process.env.TELEGRAM_CHAT_ID || '');
-      ensureSetting('TEAMS_WEBHOOK_URL', process.env.TEAMS_WEBHOOK_URL || '');
-      ensureSetting('NOTIFY_THRESHOLD', process.env.NOTIFY_THRESHOLD || 'High');
-      ensureSetting('PUBLIC_DNS_SERVERS', process.env.PUBLIC_DNS_SERVERS || '1.1.1.1,8.8.8.8');
-    }
-  });
-
-  db.get("SELECT COUNT(*) AS count FROM users", (err, row) => {
-    if (!err && row.count === 0) {
-      // Create default admin user from .env if available
-      const adminUser = process.env.AUTH_USER || 'admin';
-      const adminPass = process.env.AUTH_PASSWORD || 'admin';
-      const hash = bcrypt.hashSync(adminPass, 10);
-      db.run("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'Admin')", [adminUser, hash]);
-    }
-  });
-});
-
 function getRuntimeSettings() {
-  return new Promise((resolve, reject) => {
-    db.all('SELECT key, value FROM settings', [], (err, rows) => {
-      if (err) return reject(err);
-      const settings = {};
-      rows.forEach(row => { settings[row.key] = row.value; });
-      resolve(settings);
-    });
-  });
+  return settingsStore.getSettings(db);
 }
 
 async function applyRuntimeSettings() {
@@ -221,6 +52,8 @@ async function applyRuntimeSettings() {
     'NVD_API_KEY',
     'OTX_API_KEY',
     'THREATFOX_AUTH_KEY',
+    'BREACHDIRECTORY_RAPIDAPI_KEY',
+    'BREACHDIRECTORY_RAPIDAPI_HOST',
     'MISP_URL',
     'MISP_API_KEY',
     'INTELO_OWL_API_KEY',
@@ -229,7 +62,9 @@ async function applyRuntimeSettings() {
     'TELEGRAM_BOT_TOKEN',
     'TELEGRAM_CHAT_ID',
     'TEAMS_WEBHOOK_URL',
-    'NOTIFY_THRESHOLD'
+    'NOTIFY_THRESHOLD',
+    'NOTIFICATION_RULES',
+    'RISK_WEIGHTS'
   ];
   const settings = await getRuntimeSettings();
   runtimeKeys.forEach(key => {
@@ -246,23 +81,114 @@ function mapRedHatSeverity(sev) {
   return sev; // Low or Critical remain unchanged
 }
 
+function countFetchedItems(source, data) {
+  if (Array.isArray(data)) return data.length;
+  if (source === 'NVD' && data && Array.isArray(data.vulnerabilities)) return data.vulnerabilities.length;
+  return data ? 1 : 0;
+}
+
+function recordSourceRun(source, status, itemCount, durationMs, error, startedAt, finishedAt) {
+  const errorText = error ? String(error).slice(0, 1000) : '';
+  db.run(
+    `INSERT INTO ingestion_runs (source, status, item_count, duration_ms, error, started_at, finished_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [source, status, itemCount, durationMs, errorText, startedAt, finishedAt]
+  );
+  db.run(
+    `INSERT INTO source_health (source, status, last_success, last_failure, last_error, last_count, last_duration_ms, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(source) DO UPDATE SET
+       status = excluded.status,
+       last_success = CASE WHEN excluded.status = 'Success' THEN excluded.last_success ELSE source_health.last_success END,
+       last_failure = CASE WHEN excluded.status = 'Failure' THEN excluded.last_failure ELSE source_health.last_failure END,
+       last_error = excluded.last_error,
+       last_count = excluded.last_count,
+       last_duration_ms = excluded.last_duration_ms,
+       updated_at = CURRENT_TIMESTAMP`,
+    [
+      source,
+      status,
+      status === 'Success' ? finishedAt : null,
+      status === 'Failure' ? finishedAt : null,
+      errorText,
+      itemCount,
+      durationMs
+    ]
+  );
+}
+
+async function fetchSourceWithHealth(source, fetcher) {
+  const startedAt = new Date().toISOString();
+  const start = Date.now();
+  try {
+    const data = await fetcher();
+    const finishedAt = new Date().toISOString();
+    recordSourceRun(source, 'Success', countFetchedItems(source, data), Date.now() - start, '', startedAt, finishedAt);
+    return data;
+  } catch (err) {
+    const finishedAt = new Date().toISOString();
+    recordSourceRun(source, 'Failure', 0, Date.now() - start, err.message, startedAt, finishedAt);
+    console.error(`${source} fetch failed:`, err.message);
+    return [];
+  }
+}
+
+async function persistAlerts(alerts) {
+  await dbUtil.transaction(db, async (txDb) => {
+    const stmt = await dbUtil.prepare(txDb, `
+      INSERT INTO alerts (source, externalId, title, severity, date, url, status, attack_phase)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source, externalId) DO UPDATE SET
+        title = excluded.title,
+        severity = excluded.severity,
+        date = excluded.date,
+        url = excluded.url,
+        attack_phase = CASE WHEN excluded.attack_phase != 'Unknown' THEN excluded.attack_phase ELSE alerts.attack_phase END
+    `);
+
+    try {
+      for (const alert of alerts) {
+        await dbUtil.runStatement(stmt, [
+          alert.source,
+          alert.externalId,
+          alert.title,
+          alert.severity,
+          alert.date,
+          alert.url,
+          alert.status || 'Open',
+          alert.attack_phase || 'Unknown'
+        ]);
+      }
+    } finally {
+      await dbUtil.finalize(stmt);
+    }
+  });
+}
+
+let fetchAllSourcesRunning = false;
+
 /**
- * Fetch data from all configured sources and store in SQLite.
+ * Fetch data from all configured sources and store in PostgreSQL.
  */
 async function fetchAllSources() {
+  if (fetchAllSourcesRunning) {
+    console.warn('Skipping source fetch because a previous run is still active.');
+    return;
+  }
+
+  fetchAllSourcesRunning = true;
   try {
     await applyRuntimeSettings();
-    // Fetch data in parallel
     const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.all([
-      githubService.fetchGitHubAdvisories(),
-      nvdService.fetchNvdCves(),
-      redhatService.fetchRedHatCves(),
-      otxService.fetchOtxPulses(),
-      threatfoxService.fetchThreatFoxIocs(),
-      rssService.fetchRssFeeds(),
-      mispService.fetchMispEvents(),
-      intelOwlService.fetchIntelOwlData(),
-      yaraSigmaService.fetchYaraSigmaMatches()
+      fetchSourceWithHealth('GitHub', () => githubService.fetchGitHubAdvisories()),
+      fetchSourceWithHealth('NVD', () => nvdService.fetchNvdCves()),
+      fetchSourceWithHealth('Red Hat', () => redhatService.fetchRedHatCves()),
+      fetchSourceWithHealth('OTX', () => otxService.fetchOtxPulses()),
+      fetchSourceWithHealth('ThreatFox', () => threatfoxService.fetchThreatFoxIocs()),
+      fetchSourceWithHealth('RSS', () => rssService.fetchRssFeeds()),
+      fetchSourceWithHealth('MISP', () => mispService.fetchMispEvents()),
+      fetchSourceWithHealth('IntelOwl', () => intelOwlService.fetchIntelOwlData()),
+      fetchSourceWithHealth('YARA/Sigma', () => yaraSigmaService.fetchYaraSigmaMatches())
     ]);
 
     const alerts = [];
@@ -444,35 +370,41 @@ async function fetchAllSources() {
     }
 
     // Persist alerts to DB using upsert to avoid overwriting user updates (status, attack_phase)
-    db.serialize(() => {
-      db.run("BEGIN TRANSACTION");
-      const stmt = db.prepare(`
-        INSERT INTO alerts (source, externalId, title, severity, date, url, status, attack_phase)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(source, externalId) DO UPDATE SET
-          title = excluded.title,
-          severity = excluded.severity,
-          date = excluded.date,
-          url = excluded.url,
-          attack_phase = CASE WHEN excluded.attack_phase != 'Unknown' THEN excluded.attack_phase ELSE alerts.attack_phase END
-      `);
-      for (const alert of alerts) {
-        stmt.run(
-          alert.source,
-          alert.externalId,
-          alert.title,
-          alert.severity,
-          alert.date,
-          alert.url,
-          alert.status || 'Open',
-          alert.attack_phase || 'Unknown'
-        );
-      }
-      stmt.finalize();
-      db.run("COMMIT");
-    });
+    await persistAlerts(alerts);
 
     console.log(`Fetched and stored ${alerts.length} alerts.`);
+
+    // Perform automated brand monitoring for configured brands
+    try {
+      const settings = await settingsStore.getSettings(db);
+      let monitoredBrands = [];
+      try {
+        monitoredBrands = JSON.parse(settings.MONITORED_BRANDS || '[]');
+      } catch (e) {
+        console.error('Failed to parse MONITORED_BRANDS:', e.message);
+      }
+
+      if (Array.isArray(monitoredBrands) && monitoredBrands.length > 0) {
+        console.log(`Starting automated brand monitoring for: ${monitoredBrands.join(', ')}`);
+        for (const brand of monitoredBrands) {
+          const brandResults = await osintService.searchBrandExposure(db, brand);
+          osintService.saveFindings(db, 'brand-exposure', brand, brandResults);
+        }
+      }
+    } catch (brandErr) {
+      console.error('Automated brand monitoring failed:', brandErr.message);
+    }
+
+    try {
+      await intelligenceService.saveIndicatorsFromAlerts(db, alerts);
+      await intelligenceService.rebuildCorrelations(db);
+      const cveIds = [...new Set(alerts.flatMap(alert => intelligenceService.extractCves(`${alert.externalId || ''} ${alert.title || ''}`)))];
+      intelligenceService.enrichCves(db, cveIds).catch(err => {
+        console.error('CVE enrichment failed:', err.message);
+      });
+    } catch (intelErr) {
+      console.error('Intelligence post-processing failed:', intelErr.message);
+    }
 
     // Send notifications after storing alerts
     try {
@@ -485,13 +417,10 @@ async function fetchAllSources() {
     }
   } catch (err) {
     console.error('Error fetching alerts:', err);
+  } finally {
+    fetchAllSourcesRunning = false;
   }
 }
-
-// Initial fetch on startup
-fetchAllSources();
-// Schedule to run every hour at minute 0
-cron.schedule('0 * * * *', fetchAllSources);
 
 // Mount alerts router
 const alertsRouter = require('./routes/alerts')(db);
@@ -508,11 +437,21 @@ app.use('/api/assets', authMiddleware, assetsRouter);
 const vendorsRouter = require('./routes/vendors')(db);
 app.use('/api/vendors', authMiddleware, vendorsRouter);
 
+const dnsImpersonationRouter = require('./routes/dns_impersonation')(db);
+app.use('/api/dns-impersonation', authMiddleware, dnsImpersonationRouter);
+app.use('/api/dns_impersonation', authMiddleware, dnsImpersonationRouter);
+
 const huntRouter = require('./routes/threatHunting')(db);
 app.use('/api/hunt', authMiddleware, huntRouter);
 
 const osintRouter = require('./routes/osint')(db);
 app.use('/api/osint', authMiddleware, osintRouter);
+
+const ingestionRouter = require('./routes/ingestion')(db);
+app.use('/api/ingestion', authMiddleware, ingestionRouter);
+
+const intelligenceRouter = require('./routes/intelligence')(db);
+app.use('/api/intelligence', authMiddleware, intelligenceRouter);
 
 const usersRouter = require('./routes/users')(db);
 app.use('/api/users', authMiddleware, usersRouter);
@@ -525,7 +464,20 @@ app.get('/', (req, res) => {
   res.send('ThreatDock backend is running.');
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Backend server listening on port ${PORT}`);
+async function start() {
+  await initializeDatabase(db);
+
+  // Initial fetch on startup
+  fetchAllSources();
+  // Schedule to run every hour at minute 0
+  cron.schedule('0 * * * *', fetchAllSources);
+
+  app.listen(PORT, () => {
+    console.log(`Backend server listening on port ${PORT}`);
+  });
+}
+
+start().catch(err => {
+  console.error('Failed to start backend:', err.message);
+  db.close(() => process.exit(1));
 });

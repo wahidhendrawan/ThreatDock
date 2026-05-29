@@ -1,20 +1,14 @@
 const { validateToken } = require('../services/oauth');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const settingsStore = require('../services/settingsStore');
 
 module.exports = async function(req, res, next) {
   const db = req.db;
   if (!db) return res.status(500).send('Database not initialized');
 
   const getSettings = () => {
-    return new Promise((resolve, reject) => {
-      db.all('SELECT key, value FROM settings', [], (err, rows) => {
-        if (err) return reject(err);
-        const settings = {};
-        rows.forEach(r => { settings[r.key] = r.value; });
-        resolve(settings);
-      });
-    });
+    return settingsStore.getSettings(db);
   };
 
   try {
