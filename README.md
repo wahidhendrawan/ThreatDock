@@ -1,6 +1,11 @@
 [![CI](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml/badge.svg)](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml)
 
 # ThreatDock 🛡️
+
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL-3.0-blue.svg)](https://github.com/wahidhendrawan/ThreatDock/blob/main/LICENSE)
+[![Release](https://img.shields.io/badge/release-v1.0.0-green.svg)](https://github.com/wahidhendrawan/ThreatDock/releases)
+[![CI](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml/badge.svg)](https://github.com/wahidhendrawan/ThreatDock/actions)
+[![Pages](https://img.shields.io/badge/docs-🌐-orange.svg)](https://wahidhendrawan.github.io/ThreatDock/)
 **Centralized Threat Intelligence & Security Alert Dashboard**
 
 ThreatDock is a professional-grade security alert aggregator and threat intelligence platform. It seamlessly integrates multiple OSINT sources, CVE databases, and private intelligence feeds into a unified, actionable dashboard. Designed for security researchers and SOC analysts, it enables rapid identification, tracking, and response to emerging threats.
