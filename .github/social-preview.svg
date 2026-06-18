@@ -1,0 +1,7 @@
+<svg width="1280" height="640" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="640" fill="#0f172a"/>
+  <rect x="0" y="0" width="1280" height="8" fill="#0891b2"/>
+  <text x="640" y="260" text-anchor="middle" font-family="system-ui, sans-serif" font-size="72" font-weight="bold" fill="white">ThreatDock</text>
+  <text x="640" y="340" text-anchor="middle" font-family="system-ui, sans-serif" font-size="28" fill="#94a3b8">Threat intelligence and SecOps platform</text>
+  <text x="640" y="520" text-anchor="middle" font-family="system-ui, sans-serif" font-size="22" fill="#64748b">github.com/wahidhendrawan/ThreatDock</text>
+</svg>
