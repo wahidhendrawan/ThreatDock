@@ -5,6 +5,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Create env files for validation
+        run: |
+          find . -name '*.env.example' -exec sh -c 'cp "$1" "${1%.example}"' _ {} \;
+          find . -name 'docker-compose.yml' -exec dirname {} \; | while read d; do
+            touch "$d/.env" 2>/dev/null || true
+          done
+          touch backend/.env frontend/.env 2>/dev/null || true
       - run: docker compose config --quiet
   lint:
     runs-on: ubuntu-latest
