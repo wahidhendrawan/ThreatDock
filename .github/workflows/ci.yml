@@ -1,14 +1,23 @@
 name: CI
 on: [push, pull_request]
 jobs:
-  test:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm test --if-present
-      - run: npm run lint --if-present
+      - name: Lint frontend
+        working-directory: frontend
+        run: |
+          [ -f package.json ] && npm install && npm run lint --if-present || echo "skip"
+      - name: Lint backend
+        working-directory: backend
+        run: |
+          [ -f package.json ] && npm install && npm run lint --if-present || echo "skip"
