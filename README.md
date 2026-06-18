@@ -1,3 +1,5 @@
+[![CI](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml/badge.svg)](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml)
+
 # ThreatDock 🛡️
 **Centralized Threat Intelligence & Security Alert Dashboard**
 
