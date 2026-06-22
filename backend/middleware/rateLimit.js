@@ -6,13 +6,13 @@
 const rateStore = new Map();
 const CLEANUP_INTERVAL = 60 * 1000; // clean stale entries every 60s
 
-// Periodic cleanup
+// Periodic cleanup (unref so Jest can exit cleanly)
 setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of rateStore.entries()) {
     if (now > entry.resetAt) rateStore.delete(ip);
   }
-}, CLEANUP_INTERVAL);
+}, CLEANUP_INTERVAL).unref();
 
 /**
  * Create a rate limiter middleware.

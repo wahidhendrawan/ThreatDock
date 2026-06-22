@@ -5,15 +5,21 @@
 
 const EventEmitter = require('events');
 
-// Attempt Redis-backed queue if REDIS_URL is configured
-let BullQueue = null;
 const redisUrl = process.env.REDIS_URL || '';
-if (redisUrl) {
+
+// Lazy BullQueue initialization — called on first `.get()` when Redis is configured
+let BullQueue = null;
+let bullInitAttempted = false;
+function getBullQueue() {
+  if (bullInitAttempted) return BullQueue;
+  bullInitAttempted = true;
+  if (!redisUrl) return null;
   try {
     BullQueue = require('bull');
   } catch (e) {
-    console.warn('Bull not available, falling back to in-memory queue');
+    console.warn('Bull not available, using in-memory queue');
   }
+  return BullQueue;
 }
 
 // In-memory queue implementation
@@ -59,12 +65,16 @@ class MemoryQueue {
   async close() {}
 }
 
-// Bull-backed queue wrapper
+// Bull-backed queue wrapper (only constructed when Redis is available)
 class RedisJobQueue {
   constructor(name) {
     this.name = name;
     this.queue = new BullQueue(name, redisUrl);
-    this.queue.on('error', (err) => console.error(`Bull queue ${name} error:`, err.message));
+    this.queue.on('error', (err) => {
+      if (err.message !== 'connect ECONNREFUSED' && err.message !== 'connect ENETUNREACH') {
+        console.error(`Bull queue ${name} error:`, err.message);
+      }
+    });
   }
 
   async add(data) {
@@ -97,7 +107,8 @@ class JobQueue {
 
   get(name) {
     if (!this.queues[name]) {
-      this.queues[name] = BullQueue ? new RedisJobQueue(name) : new MemoryQueue(name);
+      const useBull = getBullQueue();
+      this.queues[name] = useBull ? new RedisJobQueue(name) : new MemoryQueue(name);
     }
     return this.queues[name];
   }
@@ -109,7 +120,7 @@ class JobQueue {
   }
 }
 
-// Global cache (Redis-backed if REDIS_URL is set, fallback to Map)
+// Global in-memory cache
 const cacheStore = {};
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
