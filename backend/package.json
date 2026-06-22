@@ -5,7 +5,12 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js"
+    "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js",
+    "migrate:partition": "node scripts/migrate-partitioning.js",
+    "test": "jest --forceExit --detectOpenHandles"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
   },
   "dependencies": {
     "axios": "^1.4.0",
@@ -19,8 +24,11 @@
     "node-cron": "^4.0.0",
     "otplib": "^13.4.0",
     "pg": "^8.21.0",
+    "socket.io": "^4.8.1",
+    "bull": "^4.16.0",
     "qrcode": "^1.5.4",
     "rss-parser": "^3.12.0",
-    "sqlite3": "^6.0.1"
+    "sqlite3": "^6.0.1",
+    "express-rate-limit": "^7.5.0"
   }
 }

@@ -5,9 +5,10 @@ import Layout from './components/Layout';
 import Filters from './components/Filters';
 import AlertList from './components/AlertList';
 import Stats from './components/Stats';
-import { 
-  ThreatHunting, AssetDiscovery, ExposureMonitoring, AssetIntelligence, 
-  VulnPrioritization, PredictiveIntel, ThreatAnalysis, DigitalRisk, 
+import { io } from 'socket.io-client';
+import {
+  ThreatHunting, AssetDiscovery, ExposureMonitoring, AssetIntelligence,
+  VulnPrioritization, PredictiveIntel, ThreatAnalysis, DigitalRisk,
   BrandExposure, ThirdPartyRisk, IntelOperations, DnsImpersonation
 } from './pages/Modules';
 import Settings from './pages/Settings';
@@ -52,7 +53,8 @@ function Dashboard({ alerts, authData }) {
   );
 }
 
-function AlertsPage({ alerts, filters, handlers, authData }) {
+function AlertsPage({ alerts, total, page, onPageChange, filters, handlers, authData }) {
+  const totalPages = Math.max(1, Math.ceil(total / 100));
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
@@ -66,7 +68,30 @@ function AlertsPage({ alerts, filters, handlers, authData }) {
         <Filters {...filters} />
       </div>
       <div className="card">
-        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Results ({alerts.length})</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h2 className="section-title" style={{ fontSize: '1rem', margin: 0 }}>Results ({total})</h2>
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.85rem' }}>
+              <button
+                className="btn btn-outline"
+                disabled={page <= 1}
+                onClick={() => onPageChange(page - 1)}
+                style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+              >
+                Prev
+              </button>
+              <span style={{ color: 'var(--text-muted)' }}>Page {page} of {totalPages}</span>
+              <button
+                className="btn btn-outline"
+                disabled={page >= totalPages}
+                onClick={() => onPageChange(page + 1)}
+                style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
         <AlertList
           alerts={alerts}
           authData={authData}
@@ -81,6 +106,8 @@ function AlertsPage({ alerts, filters, handlers, authData }) {
 function AppContent() {
   const location = useLocation();
   const [alerts, setAlerts] = useState([]);
+  const [totalAlerts, setTotalAlerts] = useState(0);
+  const [page, setPage] = useState(1);
   const [severityFilter, setSeverityFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -121,6 +148,9 @@ function AppContent() {
 
   // SSO State
   const [ssoConfig, setSsoConfig] = useState(null);
+
+  // WebSocket connection for real-time updates
+  const [socket] = useState(() => io({ transports: ['polling', 'websocket'], autoConnect: false }));
 
   useEffect(() => {
     fetch(`${API_BASE}/auth/config`)
@@ -177,6 +207,10 @@ function AppContent() {
     if (statusFilter) params.push(`status=${encodeURIComponent(statusFilter)}`);
     if (startDate) params.push(`start=${startDate}`);
     if (endDate) params.push(`end=${endDate}`);
+    // Only paginate on the /alerts page; other pages need full data for analysis
+    if (location.pathname === '/alerts') {
+      params.push(`page=${page}`, `limit=100`);
+    }
     const queryString = params.length ? `?${params.join('&')}` : '';
 
     const headers = getAuthHeaders(authData);
@@ -198,8 +232,14 @@ function AppContent() {
         if (!res.ok) throw new Error(`HTTP error ${res.status}`);
         return res.json();
       })
-      .then(data => {
-        setAlerts(Array.isArray(data) ? data : []);
+      .then(result => {
+        if (result && typeof result === 'object' && 'data' in result) {
+          setAlerts(Array.isArray(result.data) ? result.data : []);
+          setTotalAlerts(result.total || 0);
+        } else {
+          setAlerts(Array.isArray(result) ? result : []);
+          setTotalAlerts(0);
+        }
         setLoading(false);
       })
       .catch(err => {
@@ -208,7 +248,33 @@ function AppContent() {
           console.error('Error fetching alerts:', err);
         }
       });
-  }, [severityFilter, sourceFilter, statusFilter, startDate, endDate, authData]);
+  }, [severityFilter, sourceFilter, statusFilter, startDate, endDate, page, authData, location.pathname]);
+
+  // WebSocket connection — connect on auth, listen for real-time events
+  useEffect(() => {
+    if (authData && !socket.connected) {
+      socket.connect();
+    }
+    socket.on('alerts:updated', () => {
+      if (shouldFetchAlerts) fetchAlerts();
+    });
+    socket.on('push:notification', (data) => {
+      if (!('Notification' in window)) return;
+      if (Notification.permission === 'granted') {
+        new Notification(data.title, { body: data.body, icon: '/logo192.png' });
+      } else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().then(perm => {
+          if (perm === 'granted') new Notification(data.title, { body: data.body, icon: '/logo192.png' });
+        });
+      }
+    });
+    return () => { socket.off('alerts:updated'); socket.off('push:notification'); };
+  }, [authData, shouldFetchAlerts, socket, fetchAlerts]);
+
+  // Reset page to 1 when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [severityFilter, sourceFilter, statusFilter, startDate, endDate]);
 
   useEffect(() => {
     if (authData && shouldFetchAlerts) {
@@ -329,6 +395,7 @@ function AppContent() {
   };
 
   const handleLogout = () => {
+    socket.disconnect();
     localStorage.removeItem('threatdock_token');
     localStorage.removeItem('threatdock_user');
     setAuthData(null);
@@ -494,7 +561,7 @@ function AppContent() {
     <Layout user={authData?.user} onLogout={handleLogout}>
       <Routes>
         <Route path="/" element={<Dashboard alerts={filteredAlerts} authData={authData} />} />
-        <Route path="/alerts" element={<AlertsPage alerts={filteredAlerts} filters={filtersProps} authData={authData} handlers={{ handleStatusChange, handleAlertUpdate }} />} />
+        <Route path="/alerts" element={<AlertsPage alerts={filteredAlerts} total={totalAlerts} page={page} onPageChange={setPage} filters={filtersProps} authData={authData} handlers={{ handleStatusChange, handleAlertUpdate }} />} />
         <Route path="/hunting" element={<ThreatHunting authData={authData} />} />
         <Route path="/operations" element={<IntelOperations authData={authData} />} />
         <Route path="/assets" element={<AssetDiscovery authData={authData} />} />

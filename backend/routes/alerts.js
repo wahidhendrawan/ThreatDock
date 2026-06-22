@@ -27,11 +27,14 @@ module.exports = function createAlertsRouter(db) {
     );
   };
 
-  // GET /alerts - return all alerts with optional filters
+  // GET /alerts - return alerts with optional server-side pagination and filters
   router.get('/', (req, res) => {
-    const { severity, source, start, end, status, search: rawSearch } = req.query;
+    const { severity, source, start, end, status, search: rawSearch, page: rawPage, limit: rawLimit } = req.query;
     const search = typeof rawSearch === 'string' ? rawSearch : '';
-    let query = 'SELECT * FROM alerts';
+    const hasPagination = rawPage !== undefined || rawLimit !== undefined;
+    const page = Math.max(1, parseInt(rawPage) || 1);
+    const limit = Math.min(500, Math.max(1, parseInt(rawLimit) || 100));
+    const offset = (page - 1) * limit;
     const conditions = [];
     const params = [];
 
@@ -60,24 +63,43 @@ module.exports = function createAlertsRouter(db) {
       const value = `%${search}%`;
       params.push(value, value, value);
     }
-    if (conditions.length > 0) {
-      query += ' WHERE ' + conditions.join(' AND ');
-    }
-    // Order results: severity priority then date descending
-    query += ` ORDER BY CASE severity
+    const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+
+    const orderClause = ` ORDER BY CASE severity
       WHEN 'Critical' THEN 1
       WHEN 'High' THEN 2
       WHEN 'Medium' THEN 3
       WHEN 'Low' THEN 4
       ELSE 5 END, date DESC`;
 
-    db.all(query, params, (err, rows) => {
-      if (err) {
-        console.error('Database query error:', err);
-        return res.status(500).send('Internal server error');
-      }
-      res.json(rows);
-    });
+    if (hasPagination) {
+      // Get total count
+      db.get(`SELECT COUNT(*) as count FROM alerts${whereClause}`, params, (countErr, countRow) => {
+        if (countErr) {
+          console.error('Database count error:', countErr);
+          return res.status(500).send('Internal server error');
+        }
+        const total = countRow ? countRow.count : 0;
+        const paginatedParams = [...params, limit, offset];
+
+        db.all(`SELECT * FROM alerts${whereClause}${orderClause} LIMIT ? OFFSET ?`, paginatedParams, (err, rows) => {
+          if (err) {
+            console.error('Database query error:', err);
+            return res.status(500).send('Internal server error');
+          }
+          res.json({ data: rows, total, page, limit });
+        });
+      });
+    } else {
+      // No pagination — return all results (backward-compatible)
+      db.all(`SELECT * FROM alerts${whereClause}${orderClause}`, params, (err, rows) => {
+        if (err) {
+          console.error('Database query error:', err);
+          return res.status(500).send('Internal server error');
+        }
+        res.json(rows);
+      });
+    }
   });
 
   // PATCH /alerts/:id - update alert triage/case fields

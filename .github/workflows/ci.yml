@@ -4,7 +4,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Create env files for validation
         run: |
           find . -name '*.env.example' -exec sh -c 'cp "$1" "${1%.example}"' _ {} \;
@@ -13,18 +13,61 @@ jobs:
           done
           touch backend/.env frontend/.env 2>/dev/null || true
       - run: docker compose config --quiet
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: backend
+        run: npm install
+      - name: Create __mocks__ for axios (avoids network dependency in CI)
+        working-directory: backend
+        run: |
+          mkdir -p __mocks__
+          cat > __mocks__/axios.js << 'EOF'
+          module.exports = {
+            get: () => Promise.resolve({ data: {} }),
+            post: () => Promise.resolve({ data: {} }),
+            create: () => ({ get: () => Promise.resolve({ data: {} }), post: () => Promise.resolve({ data: {} }) }),
+            default: { get: () => Promise.resolve({ data: {} }), post: () => Promise.resolve({ data: {} }) }
+          };
+          EOF
+      - name: Run Jest unit tests
+        working-directory: backend
+        run: npx jest --forceExit --no-cache --passWithNoTests 2>&1
+      - name: Manual intelligence service test
+        working-directory: backend
+        run: |
+          node -e "
+            var i = require('./services/intelligence');
+            var ok=0,fail=0;
+            var a=(c,m)=>{if(c)ok++;else{fail++;console.log('FAIL:',m);}};
+            a(i.normalizeSeverity('critical')==='Critical','ns');
+            a(i.detectIndicatorType('CVE-2024-12345')==='cve','det');
+            a(i.extractCves('CVE-2024-12345').length===1,'ext');
+            a(i.extractDomains('test.com').includes('test.com'),'dom');
+            a(i.severityOrder.Critical===4,'ord');
+            a(i.extractCves('').length===0,'empty');
+            a(i.extractCves(null).length===0,'null');
+            console.log(ok+'/'+(ok+fail)+' passed');
+            process.exit(fail>0?1:0);
+          " 2>&1
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install
       - name: Lint frontend
         working-directory: frontend
-        run: |
-          [ -f package.json ] && npm install && npm run lint --if-present || echo "skip"
+        run: npm run lint --if-present || echo "skip"
       - name: Lint backend
         working-directory: backend
-        run: |
-          [ -f package.json ] && npm install && npm run lint --if-present || echo "skip"
+        run: npm run lint --if-present || echo "skip"

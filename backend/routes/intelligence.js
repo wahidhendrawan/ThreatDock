@@ -43,7 +43,11 @@ module.exports = function createIntelligenceRouter(db) {
   });
 
   router.get('/indicators', (req, res) => {
-    const { type, source, search } = req.query;
+    const { type, source, search, page: rawPage, limit: rawLimit } = req.query;
+    const hasPagination = rawPage !== undefined || rawLimit !== undefined;
+    const page = Math.max(1, parseInt(rawPage) || 1);
+    const limit = Math.min(1000, Math.max(1, parseInt(rawLimit) || 500));
+    const offset = (page - 1) * limit;
     const conditions = [];
     const params = [];
     if (type) {
@@ -58,20 +62,46 @@ module.exports = function createIntelligenceRouter(db) {
       conditions.push('(value LIKE ? OR externalId LIKE ? OR malware_family LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
-    let query = 'SELECT * FROM indicators';
-    if (conditions.length > 0) query += ` WHERE ${conditions.join(' AND ')}`;
-    query += ' ORDER BY updated_at DESC LIMIT 1000';
-    db.all(query, params, (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
-    });
+    const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const baseQuery = `SELECT * FROM indicators${whereClause}`;
+    if (hasPagination) {
+      db.get(`SELECT COUNT(*) as count FROM indicators${whereClause}`, params, (countErr, countRow) => {
+        if (countErr) return res.status(500).json({ error: countErr.message });
+        const total = countRow ? countRow.count : 0;
+        const paginatedParams = [...params, limit, offset];
+        db.all(`${baseQuery} ORDER BY updated_at DESC LIMIT ? OFFSET ?`, paginatedParams, (err, rows) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({ data: rows || [], total, page, limit });
+        });
+      });
+    } else {
+      db.all(`${baseQuery} ORDER BY updated_at DESC LIMIT 1000`, params, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+      });
+    }
   });
 
   router.get('/correlations', (req, res) => {
-    db.all('SELECT * FROM correlated_findings ORDER BY score DESC, updated_at DESC LIMIT 1000', [], (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
-    });
+    const hasPagination = req.query.page !== undefined || req.query.limit !== undefined;
+    if (hasPagination) {
+      const page = Math.max(1, parseInt(req.query.page) || 1);
+      const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit) || 500));
+      const offset = (page - 1) * limit;
+      db.get('SELECT COUNT(*) as count FROM correlated_findings', [], (countErr, countRow) => {
+        if (countErr) return res.status(500).json({ error: countErr.message });
+        const total = countRow ? countRow.count : 0;
+        db.all('SELECT * FROM correlated_findings ORDER BY score DESC, updated_at DESC LIMIT ? OFFSET ?', [limit, offset], (err, rows) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({ data: rows || [], total, page, limit });
+        });
+      });
+    } else {
+      db.all('SELECT * FROM correlated_findings ORDER BY score DESC, updated_at DESC LIMIT 1000', [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+      });
+    }
   });
 
   router.post('/correlations/rebuild', async (req, res) => {

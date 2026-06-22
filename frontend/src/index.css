@@ -225,6 +225,22 @@ body {
   color: var(--text-muted);
 }
 
+/* Live update pulse animation */
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.live-pulse {
+  animation: pulse-live 1.2s ease-in-out 3;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 0.3rem;
+}
+
 /* Main Content */
 .main-content {
   flex: 1;

@@ -1,6 +1,7 @@
 const express = require('express');
 
-module.exports = function createIngestionRouter(db) {
+module.exports = function createIngestionRouter(db, options = {}) {
+  const { fetchAllSources } = options;
   const router = express.Router();
 
   router.get('/health', (req, res) => {
@@ -24,6 +25,13 @@ module.exports = function createIngestionRouter(db) {
       if (err) return res.status(500).json({ error: err.message });
       res.json(rows || []);
     });
+  });
+
+  // POST /fetch — manually trigger source fetching
+  router.post('/fetch', (req, res) => {
+    if (!fetchAllSources) return res.status(500).json({ error: 'Fetch function not available' });
+    fetchAllSources().catch(err => console.error('Manual fetch error:', err));
+    res.json({ message: 'Source fetch started' });
   });
 
   return router;

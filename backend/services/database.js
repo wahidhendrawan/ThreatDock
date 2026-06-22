@@ -208,7 +208,7 @@ class PostgresDatabase {
     this.kind = 'postgres';
     this.pool = new Pool({
       ...config,
-      max: Number(process.env.PG_POOL_MAX || 10),
+      max: Number(process.env.PG_POOL_MAX || 25),
       idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000)
     });
   }
@@ -496,7 +496,15 @@ async function createSchema(db) {
     'CREATE INDEX IF NOT EXISTS idx_alerts_source ON alerts(source)',
     'CREATE INDEX IF NOT EXISTS idx_alerts_date ON alerts(date)',
     'CREATE INDEX IF NOT EXISTS idx_indicators_value ON indicators(value)',
-    'CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id)'
+    'CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_attack_phase ON alerts(attack_phase)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_priority ON alerts(priority)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_assignee ON alerts(assignee)',
+    'CREATE INDEX IF NOT EXISTS idx_indicators_type ON indicators(type)',
+    'CREATE INDEX IF NOT EXISTS idx_osint_findings_cat_key ON osint_findings(category, keyword)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_severity_date ON alerts(severity, date)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_source_date ON alerts(source, date)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_status_date ON alerts(status, date)'
   ];
 
   for (const statement of statements) {
