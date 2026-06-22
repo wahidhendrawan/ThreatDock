@@ -3,7 +3,7 @@
 # ThreatDock 🛡️
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL-3.0-blue.svg)](https://github.com/wahidhendrawan/ThreatDock/blob/main/LICENSE)
-[![Release](https://img.shields.io/badge/release-v1.0.0-green.svg)](https://github.com/wahidhendrawan/ThreatDock/releases)
+[![Release](https://img.shields.io/badge/release-v1.1.0-green.svg)](https://github.com/wahidhendrawan/ThreatDock/releases)
 [![CI](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml/badge.svg)](https://github.com/wahidhendrawan/ThreatDock/actions)
 [![Pages](https://img.shields.io/badge/docs-🌐-orange.svg)](https://wahidhendrawan.github.io/ThreatDock/)
 **Centralized Threat Intelligence & Security Alert Dashboard**
@@ -19,24 +19,54 @@ ThreatDock is designed to centralize and automate the workflow of Security Opera
 ---
 
 ## 🚀 Key Features
-- **Intelligent Aggregation**: Unified feed from GitHub Security Advisories, NVD CVEs, Red Hat Security, AlienVault OTX, and ThreatFox.
-- **Advanced Ingestion**: Built-in RSS collectors for SANS ISC, CISA (US-CERT), BleepingComputer, Dark Reading, and more.
+
+### Intelligence & Ingestion
+- **Intelligent Aggregation**: Unified feed from GitHub Security Advisories, NVD CVEs, Red Hat Security, AlienVault OTX, ThreatFox, and RSS feeds.
+- **Advanced Ingestion**: Built-in collectors for SANS ISC, CISA (US-CERT), BleepingComputer, Dark Reading, and more.
+- **IOC Registry**: Automatic extraction and correlation of CVEs, IPs, domains, hashes from all ingested sources.
+- **CISA KEV / FIRST EPSS**: Automatic enrichment of CVEs with Known Exploited Vulnerability and Exploit Prediction scoring.
+- **Cross-Source Correlations**: AI-free correlation engine linking alerts, indicators, assets, and vendors into unified findings.
+
+### Performance & Architecture (v1.1)
+- **Batch Database Operations**: Bulk INSERT (1000 rows) for alerts, indicators, and CVE enrichment — 10-50x faster ingestion.
+- **Real-Time WebSocket Updates**: Dashboard, alerts, and IntelOperations auto-refresh via Socket.IO — no manual refresh needed.
+- **Server-Side Pagination**: Scalable `{data, total, page, limit}` response format for alerts, assets, indicators, and correlations.
+- **In-Memory Job Queue**: Lightweight queue with optional Redis/Bull backing for parallel source fetching.
+- **Settings Cache**: 5-minute TTL cache on runtime settings reduces redundant DB queries per fetch cycle.
+- **Redis Service**: Optional Redis 7 service for production-grade queue persistence and caching.
+- **N+1 Query Elimination**: Word-index-based asset matching replaces O(n*m) nested loops in correlation engine.
+- **Data Retention**: Weekly automatic pruning of alerts older than 90 days (configurable).
+- **In-Memory Rate Limiter**: Per-IP sliding window — auth 120/min, API 600/min.
+
+### Platform & UX
+- **Real-Time Live Indicators**: IntelOperations shows live source-health pulse with animated dot indicators.
+- **PWA Support**: Service worker with network-first caching, manifest.json, and push notification support.
+- **Swagger/OpenAPI Docs**: Self-hosted interactive API documentation at `/api/docs` (no CDN dependencies).
+- **Manual Fetch Trigger**: "Fetch Sources" button in IntelOperations triggers immediate ingestion cycle.
+- **Timeout Safety**: 30-minute automatic lock reset for stuck ingestion runs.
+- **Parallel Notifications**: Slack, Teams, Telegram, and n8n webhooks sent concurrently via `Promise.allSettled`.
+
+### Detection & Response
 - **Contextual Asset Intelligence**: Deeply enriches assets with mapped CVEs, active IOCs, vendor risks, and OSINT findings.
 - **Unified Risk Prioritization**: Single scoring system across External Assets, Digital Risk, Brand Exposure, and Third-Party Risk Management.
 - **Case Management Workflow**: Alert ownership, priority, SLA dates, tags, summaries, comments, and audit history for SOC triage.
-- **Operational Intel Health**: Collector health, ingestion history, IOC registry, CISA KEV/FIRST EPSS enrichment, and cross-source correlations.
+- **Operational Intel Health**: Collector health dashboard, ingestion history, IOC registry, and cross-source correlations.
 - **Context-Rich Threat Analysis**: Visual MITRE ATT&CK distribution and deep correlation mapping.
-- **Automated Notifications**: Slack, Microsoft Teams, Telegram, and n8n webhooks with customizable severity thresholds and JSON-based routing rules.
-- **Enterprise Architecture**: Built-in Nginx Reverse Proxy handles API routing (`/api` and `/auth`) transparently without cross-origin issues or SSL mixed-content errors.
 - **Dynamic Configuration**: UI-driven API key management with active validation status.
+
+### Infrastructure
+- **Enterprise Architecture**: Built-in Nginx Reverse Proxy handles API routing transparently.
+- **PostgreSQL 16**: With composite indexes for time-series query performance.
+- **Docker Compose**: Single-command deployment with all services.
+- **Automated Notifications**: Slack, Microsoft Teams, Telegram, and n8n webhooks with customizable severity thresholds.
 
 ---
 
 ## 🛠️ Tech Stack
-- **Frontend**: React.js, Lucide Icons, Vanilla CSS (Premium Dark/Light Themes), Nginx Reverse Proxy.
-- **Backend**: Node.js, Express.js.
-- **Storage**: PostgreSQL 16 with host bind-mounted data under `./data/postgres`.
-- **Deployment**: Docker, Docker Compose.
+- **Frontend**: React 18, React Router, Recharts, Lucide Icons, Vanilla CSS (Premium Dark Theme), Socket.IO Client
+- **Backend**: Node.js, Express.js, Socket.IO, node-cron
+- **Database**: PostgreSQL 16, optional Redis 7 for queue
+- **Infrastructure**: Docker, Docker Compose, Nginx Reverse Proxy
 
 ---
 
@@ -57,21 +87,16 @@ Edit `.env` and add your API keys to enable full intelligence enrichment. The de
 ### 3. Deployment
 Run the entire stack using Docker:
 ```bash
-docker-compose build --no-cache
-docker-compose up -d
+docker compose up -d --build
 ```
 
-PostgreSQL data is persisted on the host at `./data/postgres`, not inside the backend container. To override the default database credentials, set `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` in the shell or a root-level Compose `.env` before starting the stack.
-
-### Migrating Existing SQLite Data
-If you are upgrading from the older SQLite deployment, stop the old backend, copy `/app/alerts.db` from the backend container to a host backup directory, start PostgreSQL, then run:
-```bash
-docker compose run --rm -v /opt/ThreatDock/data/sqlite-backup:/sqlite-backup:ro -e SQLITE_DB_PATH=/sqlite-backup/alerts.db backend npm run migrate:postgres
-```
+PostgreSQL data is persisted on the host at `./data/postgres`. To override the default database credentials, set `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` before starting.
 
 ### 4. Access
-- **Unified Dashboard & API**: `http://localhost:3000` (Routed by Nginx)
-- The frontend proxy will automatically route `/api/*` and `/auth/*` requests internally to the backend.
+- **Dashboard**: `http://localhost:3000` / `https://frontend.threatdock.orb.local`
+- **Default login**: As configured in `.env` (`AUTH_USER` / `AUTH_PASSWORD`)
+- **API Documentation**: `http://localhost:3000/api/docs`
+- **Backend Health**: `http://localhost:5002/`
 
 ---
 
@@ -82,9 +107,48 @@ docker compose run --rm -v /opt/ThreatDock/data/sqlite-backup:/sqlite-backup:ro 
 | **ThreatFox** | IOCs | Real-time malware indicators. |
 | **MISP** | Threat Intel | Community-driven threat sharing. |
 | **NVD / GitHub** | CVEs | Vulnerability data and security advisories. |
+| **Red Hat Security** | CVEs | Red Hat product vulnerability data. |
 | **CISA KEV / FIRST EPSS** | Exploit Prioritization | Known exploited vulnerability and exploit-probability enrichment. |
 | **BreachDirectory (RapidAPI)** | Credential Exposure | Credential breach lookup for Digital Risk workflows. |
 | **IntelOwl** | Analysis | Comprehensive malware & file analysis. |
+| **URLScan.io** | Brand Exposure | Domain and brand monitoring. |
+| **RSS Feeds** | News | Customizable RSS intelligence feeds. |
+
+---
+
+## 📡 API Documentation
+
+Interactive API documentation is available at `/api/docs` when the backend is running:
+
+```bash
+# OpenAPI 3.0 spec
+curl http://localhost:5002/api/docs.json
+
+# Swagger UI
+open http://localhost:3000/api/docs
+```
+
+### Key Endpoints
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/alerts?page=&limit=` | Paginated alerts with filters |
+| `GET` | `/api/assets?page=&limit=` | Paginated asset inventory |
+| `GET` | `/api/intelligence/indicators` | IOC registry |
+| `GET` | `/api/intelligence/correlations` | Correlated findings |
+| `GET` | `/api/ingestion/health` | Source health status |
+| `POST` | `/api/ingestion/fetch` | Manual source fetch trigger |
+| `POST` | `/auth/local-login` | Authentication |
+
+---
+
+## 🧪 Testing
+
+```bash
+cd backend
+npm test
+```
+
+Unit tests cover intelligence service (severity normalization, CVE extraction, domain parsing, indicator type detection), in-memory cache module (set/get/TTL/del/flush), and job queue (buffered processing).
 
 ---
 
