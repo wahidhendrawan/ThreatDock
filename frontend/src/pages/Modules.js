@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 import PaginationControls, { usePagination } from '../components/PaginationControls';
+import { io } from 'socket.io-client';
 
 // Helper to build auth headers
 function getAuthHeaders(authData) {
@@ -1891,6 +1892,8 @@ export function IntelOperations({ authData }) {
 
   const [indicatorsCount, setIndicatorsCount] = useState(0);
   const [correlationsCount, setCorrelationsCount] = useState(0);
+  const [liveSources, setLiveSources] = useState({}); // { sourceName: timestamp }
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   const headers = getAuthHeaders(authData);
 
@@ -1925,6 +1928,24 @@ export function IntelOperations({ authData }) {
     loadOperations();
   }, []);
 
+  // WebSocket auto-refresh with live source tracking
+  useEffect(() => {
+    const socket = io({ transports: ['polling', 'websocket'], autoConnect: true });
+    socket.on('source:health', (data) => {
+      if (data && data.source) {
+        setLiveSources(prev => ({ ...prev, [data.source]: Date.now() }));
+        // Clear the "live" highlight after 5 seconds
+        setTimeout(() => setLiveSources(prev => { const n = { ...prev }; delete n[data.source]; return n; }), 5000);
+      }
+      setLastUpdated(new Date().toLocaleTimeString());
+      loadOperations();
+    });
+    socket.on('alerts:updated', () => { loadOperations(); });
+    socket.on('correlations:updated', () => { loadOperations(); });
+    socket.on('fetch:complete', () => { setLastUpdated(new Date().toLocaleTimeString()); });
+    return () => { socket.disconnect(); };
+  }, []);
+
   const rebuildCorrelations = async () => {
     await fetch('/api/intelligence/correlations/rebuild', { method: 'POST', headers });
     loadOperations();
@@ -1954,14 +1975,23 @@ export function IntelOperations({ authData }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="page-header">
-        <div>
-          <h1 className="page-title">Intel Operations</h1>
-          <p className="page-subtitle">Collector health, ingestion runs, IOC registry, correlation findings, and audit events.</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div>
+            <h1 className="page-title">Intel Operations</h1>
+            <p className="page-subtitle">Collector health, ingestion runs, IOC registry, correlation findings, and audit events.</p>
+          </div>
+          {lastUpdated && (
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', display: 'inline-block' }}></span>
+              Live — updated {lastUpdated}
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button className="btn btn-outline" onClick={loadOperations} disabled={loading}>Refresh</button>
           <button className="btn btn-outline" onClick={rebuildCorrelations}>Rebuild Correlations</button>
           <button className="btn btn-primary" onClick={refreshCveEnrichment}>Refresh KEV/EPSS</button>
+          <button className="btn btn-success" onClick={async () => { await fetch('/api/ingestion/fetch', { method: 'POST', headers }); loadOperations(); }}>Fetch Sources</button>
         </div>
       </div>
 
@@ -1978,8 +2008,11 @@ export function IntelOperations({ authData }) {
           items={health}
           headers={['Source', 'Status', 'Last Success', 'Last Failure', 'Count', 'Duration', 'Error']}
           renderRow={(item) => (
-            <tr key={item.source}>
-              <td style={{ fontWeight: 600 }}>{item.source}</td>
+            <tr key={item.source} className={liveSources[item.source] ? 'live-pulse' : ''}>
+              <td style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                {liveSources[item.source] && <span className="live-dot" style={{ background: '#34d399' }}></span>}
+                {item.source}
+              </td>
               <td><span className={`severity-badge severity-${item.status === 'Success' ? 'Low' : 'High'}`}>{item.status || '-'}</span></td>
               <td>{item.last_success ? new Date(item.last_success).toLocaleString() : '-'}</td>
               <td>{item.last_failure ? new Date(item.last_failure).toLocaleString() : '-'}</td>

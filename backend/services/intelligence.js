@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { cache } = require('./queue');
 
 const CISA_KEV_URL = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
 const FIRST_EPSS_URL = 'https://api.first.org/data/v1/epss';
@@ -94,19 +95,28 @@ async function saveIndicatorsFromAlerts(db, alerts) {
     }
   }
 
+  // Deduplicate candidates by (source, value, type) before batch insert
+  const seen = new Set();
+  const unique = [];
   for (const item of candidates) {
-    const now = new Date().toISOString();
-    await runAsync(
-      db,
-      `INSERT INTO indicators (value, type, source, externalId, severity, confidence, first_seen, last_seen, metadata, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(source, value, type) DO UPDATE SET
-         severity = excluded.severity,
-         confidence = excluded.confidence,
-         last_seen = excluded.last_seen,
-         metadata = excluded.metadata,
-         updated_at = CURRENT_TIMESTAMP`,
-      [
+    const key = `${item.alert.source || 'ThreatDock'}:${item.value}:${item.type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+
+  // Batch INSERT
+  const BATCH_SIZE = 1000;
+  for (let i = 0; i < unique.length; i += BATCH_SIZE) {
+    const batch = unique.slice(i, i + BATCH_SIZE);
+    const values = [];
+    const params = [];
+    let idx = 0;
+    for (const item of batch) {
+      const now = new Date().toISOString();
+      const n = idx * 9;
+      values.push(`($${n+1},$${n+2},$${n+3},$${n+4},$${n+5},$${n+6},$${n+7},$${n+8},$${n+9},CURRENT_TIMESTAMP)`);
+      params.push(
         item.value,
         item.type,
         item.alert.source || 'ThreatDock',
@@ -116,8 +126,19 @@ async function saveIndicatorsFromAlerts(db, alerts) {
         item.alert.date || now,
         now,
         JSON.stringify({ alertTitle: item.alert.title || '', alertUrl: item.alert.url || '' })
-      ]
-    );
+      );
+      idx++;
+    }
+    await db.query(`
+      INSERT INTO indicators (value, type, source, externalId, severity, confidence, first_seen, last_seen, metadata, updated_at)
+      VALUES ${values.join(', ')}
+      ON CONFLICT(source, value, type) DO UPDATE SET
+        severity = excluded.severity,
+        confidence = excluded.confidence,
+        last_seen = excluded.last_seen,
+        metadata = excluded.metadata,
+        updated_at = CURRENT_TIMESTAMP
+    `, params);
   }
 }
 
@@ -146,11 +167,15 @@ function addGroup(groups, groupKey, title, alert, indicator, entityRef) {
 }
 
 async function rebuildCorrelations(db) {
+  // Check cache — skip if correlations were rebuilt in the last 5 minutes
+  const cached = await cache.get('correlations:rebuilt');
+  if (cached) return;
+
   const [alerts, indicators, assets, vendors] = await Promise.all([
-    allAsync(db, 'SELECT * FROM alerts ORDER BY date DESC LIMIT 5000'),
-    allAsync(db, 'SELECT * FROM indicators ORDER BY updated_at DESC LIMIT 5000'),
-    allAsync(db, 'SELECT * FROM assets'),
-    allAsync(db, 'SELECT * FROM vendors')
+    allAsync(db, 'SELECT id, source, externalId, title, severity, date, url FROM alerts ORDER BY date DESC LIMIT 5000'),
+    allAsync(db, 'SELECT id, value, type, source, severity FROM indicators ORDER BY updated_at DESC LIMIT 5000'),
+    allAsync(db, 'SELECT id, domain, ip FROM assets'),
+    allAsync(db, 'SELECT id, name FROM vendors')
   ]);
 
   const groups = new Map();
@@ -170,26 +195,57 @@ async function rebuildCorrelations(db) {
     addGroup(groups, key, indicator.value, null, indicator, indicator.value);
   }
 
+  // Build reverse index: word → [groupKey] for O(m) asset matching instead of O(n * m)
+  const wordIndex = new Map();
+  for (const [key, group] of groups.entries()) {
+    const words = key.toLowerCase().split(/[:.\s-]+/);
+    for (const word of words) {
+      if (word.length < 2) continue;
+      if (!wordIndex.has(word)) wordIndex.set(word, []);
+      wordIndex.get(word).push(key);
+    }
+  }
+
   for (const asset of assets) {
     const values = [asset.domain, asset.ip].filter(Boolean).map(value => String(value).toLowerCase());
     for (const value of values) {
-      for (const [key, group] of groups.entries()) {
-        if (key.includes(value)) group.entityRefs.add(`asset:${asset.id}:${asset.domain || asset.ip}`);
+      const matched = new Set();
+      // Check direct key match first
+      for (const [key] of groups) {
+        if (key.includes(value)) matched.add(key);
+      }
+      // Then check via word index for partial matches
+      const valueWords = value.split(/[:.\s-]+/);
+      for (const w of valueWords) {
+        if (w.length < 2) continue;
+        const idxHits = wordIndex.get(w);
+        if (idxHits) idxHits.forEach(k => matched.add(k));
+      }
+      for (const key of matched) {
+        const group = groups.get(key);
+        if (group) group.entityRefs.add(`asset:${asset.id}:${asset.domain || asset.ip}`);
       }
     }
   }
 
+  // Pre-index alert text for O(v * 1) vendor matching instead of O(v * a)
+  const alertTexts = alerts.map(alert => ({
+    alert,
+    text: `${alert.title || ''} ${alert.source || ''}`.toLowerCase()
+  }));
   for (const vendor of vendors) {
     const name = String(vendor.name || '').toLowerCase();
     if (!name) continue;
-    for (const alert of alerts) {
-      const text = `${alert.title || ''} ${alert.source || ''}`.toLowerCase();
+    for (const { alert, text } of alertTexts) {
       if (text.includes(name)) {
         addGroup(groups, `vendor:${name}`, vendor.name, alert, null, `vendor:${vendor.id}:${vendor.name}`);
       }
     }
   }
 
+  // Batch INSERT correlated findings
+  const BATCH_SIZE = 500;
+  const entries = [];
   for (const group of groups.values()) {
     const allItems = [...group.alerts, ...group.indicators];
     if (allItems.length === 0) continue;
@@ -197,34 +253,43 @@ async function rebuildCorrelations(db) {
     const sourceCount = group.sources.size;
     const score = Math.min(100, (severityOrder[severity] || 0) * 20 + sourceCount * 8 + allItems.length * 2);
     const confidence = Math.min(100, 45 + sourceCount * 15 + Math.min(allItems.length * 5, 30));
-
-    await runAsync(
-      db,
-      `INSERT INTO correlated_findings (group_key, title, severity, score, confidence, sources, alert_ids, indicator_ids, entity_refs, status, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Open', CURRENT_TIMESTAMP)
-       ON CONFLICT(group_key) DO UPDATE SET
-         title = excluded.title,
-         severity = excluded.severity,
-         score = excluded.score,
-         confidence = excluded.confidence,
-         sources = excluded.sources,
-         alert_ids = excluded.alert_ids,
-         indicator_ids = excluded.indicator_ids,
-         entity_refs = excluded.entity_refs,
-         updated_at = CURRENT_TIMESTAMP`,
-      [
-        group.groupKey,
-        group.title || group.groupKey,
-        severity,
-        score,
-        confidence,
-        JSON.stringify([...group.sources]),
-        JSON.stringify(group.alerts.map(alert => alert.id).filter(Boolean)),
-        JSON.stringify(group.indicators.map(indicator => indicator.id).filter(Boolean)),
-        JSON.stringify([...group.entityRefs])
-      ]
-    );
+    entries.push({
+      groupKey: group.groupKey,
+      title: group.title || group.groupKey,
+      severity,
+      score,
+      confidence,
+      sources: JSON.stringify([...group.sources]),
+      alertIds: JSON.stringify(group.alerts.map(a => a.id).filter(Boolean)),
+      indicatorIds: JSON.stringify(group.indicators.map(i => i.id).filter(Boolean)),
+      entityRefs: JSON.stringify([...group.entityRefs])
+    });
   }
+
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const batch = entries.slice(i, i + BATCH_SIZE);
+    const values = [];
+    const params = [];
+    let idx = 0;
+    for (const e of batch) {
+      const n = idx * 9;
+      values.push(`($${n+1},$${n+2},$${n+3},$${n+4},$${n+5},$${n+6},$${n+7},$${n+8},$${n+9},'Open',CURRENT_TIMESTAMP)`);
+      params.push(e.groupKey, e.title, e.severity, e.score, e.confidence, e.sources, e.alertIds, e.indicatorIds, e.entityRefs);
+      idx++;
+    }
+    await db.query(`
+      INSERT INTO correlated_findings (group_key, title, severity, score, confidence, sources, alert_ids, indicator_ids, entity_refs, status, updated_at)
+      VALUES ${values.join(', ')}
+      ON CONFLICT(group_key) DO UPDATE SET
+        title = excluded.title, severity = excluded.severity, score = excluded.score,
+        confidence = excluded.confidence, sources = excluded.sources,
+        alert_ids = excluded.alert_ids, indicator_ids = excluded.indicator_ids,
+        entity_refs = excluded.entity_refs, updated_at = CURRENT_TIMESTAMP
+    `, params);
+  }
+
+  // Cache rebuilt flag for 5 minutes so subsequent calls in the same window skip
+  await cache.set('correlations:rebuilt', true, 5 * 60 * 1000);
 }
 
 async function fetchKevMap() {
@@ -261,31 +326,39 @@ async function fetchEpssMap(cveIds) {
 }
 
 async function enrichCves(db, cveIds) {
-  const uniqueCves = [...new Set((cveIds || []).map(cve => String(cve).toUpperCase()))].slice(0, 300);
+  let uniqueCves = [...new Set((cveIds || []).map(cve => String(cve).toUpperCase()))].slice(0, 300);
   if (uniqueCves.length === 0) return;
+
+  // Skip CVE yang masih fresh (< 24 jam)
+  try {
+    const freshRows = await allAsync(db,
+      `SELECT cve_id FROM cve_enrichment WHERE updated_at > CURRENT_TIMESTAMP - INTERVAL '24 hours'`
+    );
+    const freshSet = new Set(freshRows.map(r => r.cve_id));
+    uniqueCves = uniqueCves.filter(cve => !freshSet.has(cve));
+    if (uniqueCves.length === 0) return;
+  } catch (e) {
+    // Jika query gagal (misal tipe DB), lanjutkan tanpa filter
+  }
 
   const [kevMap, epssMap] = await Promise.all([
     fetchKevMap().catch(() => new Map()),
     fetchEpssMap(uniqueCves).catch(() => new Map())
   ]);
 
-  for (const cve of uniqueCves) {
-    const kev = kevMap.get(cve);
-    const epss = epssMap.get(cve);
-    await runAsync(
-      db,
-      `INSERT INTO cve_enrichment (cve_id, epss_score, epss_percentile, kev_known, kev_date_added, kev_due_date, kev_required_action, ransomware_use, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(cve_id) DO UPDATE SET
-         epss_score = excluded.epss_score,
-         epss_percentile = excluded.epss_percentile,
-         kev_known = excluded.kev_known,
-         kev_date_added = excluded.kev_date_added,
-         kev_due_date = excluded.kev_due_date,
-         kev_required_action = excluded.kev_required_action,
-         ransomware_use = excluded.ransomware_use,
-         updated_at = CURRENT_TIMESTAMP`,
-      [
+  // Batch INSERT
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < uniqueCves.length; i += BATCH_SIZE) {
+    const batch = uniqueCves.slice(i, i + BATCH_SIZE);
+    const values = [];
+    const params = [];
+    let idx = 0;
+    for (const cve of batch) {
+      const kev = kevMap.get(cve);
+      const epss = epssMap.get(cve);
+      const n = idx * 8;
+      values.push(`($${n+1},$${n+2},$${n+3},$${n+4},$${n+5},$${n+6},$${n+7},$${n+8},CURRENT_TIMESTAMP)`);
+      params.push(
         cve,
         epss && Number.isFinite(epss.epss) ? epss.epss : null,
         epss && Number.isFinite(epss.percentile) ? epss.percentile : null,
@@ -294,8 +367,22 @@ async function enrichCves(db, cveIds) {
         kev ? kev.dueDate || '' : '',
         kev ? kev.requiredAction || '' : '',
         kev ? kev.knownRansomwareCampaignUse || '' : ''
-      ]
-    );
+      );
+      idx++;
+    }
+    await db.query(`
+      INSERT INTO cve_enrichment (cve_id, epss_score, epss_percentile, kev_known, kev_date_added, kev_due_date, kev_required_action, ransomware_use, updated_at)
+      VALUES ${values.join(', ')}
+      ON CONFLICT(cve_id) DO UPDATE SET
+        epss_score = excluded.epss_score,
+        epss_percentile = excluded.epss_percentile,
+        kev_known = excluded.kev_known,
+        kev_date_added = excluded.kev_date_added,
+        kev_due_date = excluded.kev_due_date,
+        kev_required_action = excluded.kev_required_action,
+        ransomware_use = excluded.ransomware_use,
+        updated_at = CURRENT_TIMESTAMP
+    `, params);
   }
 }
 

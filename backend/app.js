@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const cors = require('cors');
 const cron = require('node-cron');
 
@@ -16,8 +18,10 @@ const intelligenceService = require('./services/intelligence');
 const settingsStore = require('./services/settingsStore');
 const dbUtil = require('./services/db');
 const { createDatabase, initializeDatabase } = require('./services/database');
+const { JobQueue } = require('./services/queue');
 
 const authMiddleware = require('./middleware/auth');
+const rateLimit = require('./middleware/rateLimit');
 const rssService = require('./services/rss');
 const osintService = require('./services/osint');
 
@@ -26,14 +30,43 @@ const PORT = process.env.PORT || 5002;
 
 // Middleware
 const helmet = require('helmet');
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      fontSrc: ["'self'", 'https:', 'data:'],
+      connectSrc: ["'self'", 'ws:', 'wss:'],
+      baseUri: ["'self'"],
+      formAction: ["'self'"]
+    }
+  }
+}));
 app.use(cors());
 app.use(express.json());
 
 app.disable('x-powered-by');
 
+// Trust proxy for correct IP detection behind nginx
+app.set('trust proxy', 1);
+
+// Suppress harmless TimeoutOverflowWarning from internal libs (Node 25+)
+process.on('warning', (warning) => {
+  if (warning.name === 'TimeoutOverflowWarning') return;
+  console.warn(warning.name, warning.message);
+});
+
+// Create HTTP server and WebSocket
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+
 // Initialize PostgreSQL database adapter
 const db = createDatabase();
+const jobQueue = new JobQueue();
 
 app.use((req, res, next) => {
   req.db = db;
@@ -42,11 +75,25 @@ app.use((req, res, next) => {
 
 // Remove global authMiddleware here
 
+// Settings cache with TTL
+let cachedSettings = null;
+let lastSettingsFetch = 0;
+const SETTINGS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 function getRuntimeSettings() {
   return settingsStore.getSettings(db);
 }
 
 async function applyRuntimeSettings() {
+  const now = Date.now();
+  let settings;
+  if (cachedSettings && (now - lastSettingsFetch) < SETTINGS_CACHE_TTL) {
+    settings = cachedSettings;
+  } else {
+    settings = await getRuntimeSettings();
+    cachedSettings = settings;
+    lastSettingsFetch = now;
+  }
   const runtimeKeys = [
     'GITHUB_TOKEN',
     'NVD_API_KEY',
@@ -66,7 +113,6 @@ async function applyRuntimeSettings() {
     'NOTIFICATION_RULES',
     'RISK_WEIGHTS'
   ];
-  const settings = await getRuntimeSettings();
   runtimeKeys.forEach(key => {
     if (settings[key] !== undefined) process.env[key] = settings[key];
   });
@@ -115,6 +161,7 @@ function recordSourceRun(source, status, itemCount, durationMs, error, startedAt
       durationMs
     ]
   );
+  io.emit('source:health', { source, status, itemCount, durationMs });
 }
 
 async function fetchSourceWithHealth(source, fetcher) {
@@ -134,62 +181,95 @@ async function fetchSourceWithHealth(source, fetcher) {
 }
 
 async function persistAlerts(alerts) {
-  await dbUtil.transaction(db, async (txDb) => {
-    const stmt = await dbUtil.prepare(txDb, `
-      INSERT INTO alerts (source, externalId, title, severity, date, url, status, attack_phase)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source, externalId) DO UPDATE SET
+  if (alerts.length === 0) return;
+  // Deduplicate by (source, externalId) to avoid ON CONFLICT errors in batch
+  const seen = new Set();
+  const unique = [];
+  for (const alert of alerts) {
+    const key = `${alert.source}:${alert.externalId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(alert);
+  }
+  const BATCH_SIZE = 1000;
+  for (let i = 0; i < unique.length; i += BATCH_SIZE) {
+    const batch = unique.slice(i, i + BATCH_SIZE);
+    const values = [];
+    const params = [];
+    let idx = 0;
+    for (const alert of batch) {
+      const n = idx * 8;
+      values.push(`($${n+1},$${n+2},$${n+3},$${n+4},$${n+5},$${n+6},$${n+7},$${n+8})`);
+      params.push(
+        alert.source,
+        alert.externalId,
+        alert.title,
+        alert.severity,
+        alert.date,
+        alert.url,
+        alert.status || 'Open',
+        alert.attack_phase || 'Unknown'
+      );
+      idx++;
+    }
+    await db.query(`
+      INSERT INTO alerts (source, "externalId", title, severity, date, url, status, attack_phase)
+      VALUES ${values.join(', ')}
+      ON CONFLICT(source, "externalId") DO UPDATE SET
         title = excluded.title,
         severity = excluded.severity,
         date = excluded.date,
         url = excluded.url,
         attack_phase = CASE WHEN excluded.attack_phase != 'Unknown' THEN excluded.attack_phase ELSE alerts.attack_phase END
-    `);
-
-    try {
-      for (const alert of alerts) {
-        await dbUtil.runStatement(stmt, [
-          alert.source,
-          alert.externalId,
-          alert.title,
-          alert.severity,
-          alert.date,
-          alert.url,
-          alert.status || 'Open',
-          alert.attack_phase || 'Unknown'
-        ]);
-      }
-    } finally {
-      await dbUtil.finalize(stmt);
-    }
-  });
+    `, params);
+  }
 }
 
 let fetchAllSourcesRunning = false;
+let fetchStartedAt = 0;
+const FETCH_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes safety timeout
 
 /**
  * Fetch data from all configured sources and store in PostgreSQL.
  */
 async function fetchAllSources() {
+  // Safety: reset if stuck longer than FETCH_TIMEOUT_MS
   if (fetchAllSourcesRunning) {
-    console.warn('Skipping source fetch because a previous run is still active.');
-    return;
+    if (Date.now() - fetchStartedAt > FETCH_TIMEOUT_MS) {
+      console.warn('Previous fetch timed out. Resetting lock.');
+      fetchAllSourcesRunning = false;
+    } else {
+      console.warn('Skipping source fetch because a previous run is still active.');
+      return;
+    }
   }
 
   fetchAllSourcesRunning = true;
+  fetchStartedAt = Date.now();
   try {
     await applyRuntimeSettings();
-    const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.all([
-      fetchSourceWithHealth('GitHub', () => githubService.fetchGitHubAdvisories()),
-      fetchSourceWithHealth('NVD', () => nvdService.fetchNvdCves()),
-      fetchSourceWithHealth('Red Hat', () => redhatService.fetchRedHatCves()),
-      fetchSourceWithHealth('OTX', () => otxService.fetchOtxPulses()),
-      fetchSourceWithHealth('ThreatFox', () => threatfoxService.fetchThreatFoxIocs()),
-      fetchSourceWithHealth('RSS', () => rssService.fetchRssFeeds()),
-      fetchSourceWithHealth('MISP', () => mispService.fetchMispEvents()),
-      fetchSourceWithHealth('IntelOwl', () => intelOwlService.fetchIntelOwlData()),
-      fetchSourceWithHealth('YARA/Sigma', () => yaraSigmaService.fetchYaraSigmaMatches())
-    ]);
+
+    const JOB_TIMEOUT = 60000; // 60s per source max
+    const withTimeout = (name, fn) =>
+      Promise.race([
+        fetchSourceWithHealth(name, fn),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`${name} timed out`)), JOB_TIMEOUT))
+      ]).catch(err => {
+        console.error(`${name} failed:`, err.message);
+        return [];
+      });
+
+    const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.allSettled([
+      withTimeout('GitHub', () => githubService.fetchGitHubAdvisories()),
+      withTimeout('NVD', () => nvdService.fetchNvdCves()),
+      withTimeout('Red Hat', () => redhatService.fetchRedHatCves()),
+      withTimeout('OTX', () => otxService.fetchOtxPulses()),
+      withTimeout('ThreatFox', () => threatfoxService.fetchThreatFoxIocs()),
+      withTimeout('RSS', () => rssService.fetchRssFeeds()),
+      withTimeout('MISP', () => mispService.fetchMispEvents()),
+      withTimeout('IntelOwl', () => intelOwlService.fetchIntelOwlData()),
+      withTimeout('YARA/Sigma', () => yaraSigmaService.fetchYaraSigmaMatches())
+    ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : []));
 
     const alerts = [];
 
@@ -371,10 +451,11 @@ async function fetchAllSources() {
 
     // Persist alerts to DB using upsert to avoid overwriting user updates (status, attack_phase)
     await persistAlerts(alerts);
+    io.emit('alerts:updated', { count: alerts.length });
 
     console.log(`Fetched and stored ${alerts.length} alerts.`);
 
-    // Perform automated brand monitoring for configured brands
+    // Perform automated brand monitoring for configured brands (parallel via queue)
     try {
       const settings = await settingsStore.getSettings(db);
       let monitoredBrands = [];
@@ -386,10 +467,10 @@ async function fetchAllSources() {
 
       if (Array.isArray(monitoredBrands) && monitoredBrands.length > 0) {
         console.log(`Starting automated brand monitoring for: ${monitoredBrands.join(', ')}`);
-        for (const brand of monitoredBrands) {
+        await Promise.all(monitoredBrands.map(async (brand) => {
           const brandResults = await osintService.searchBrandExposure(db, brand);
           osintService.saveFindings(db, 'brand-exposure', brand, brandResults);
-        }
+        }));
       }
     } catch (brandErr) {
       console.error('Automated brand monitoring failed:', brandErr.message);
@@ -398,6 +479,7 @@ async function fetchAllSources() {
     try {
       await intelligenceService.saveIndicatorsFromAlerts(db, alerts);
       await intelligenceService.rebuildCorrelations(db);
+      io.emit('correlations:updated');
       const cveIds = [...new Set(alerts.flatMap(alert => intelligenceService.extractCves(`${alert.externalId || ''} ${alert.title || ''}`)))];
       intelligenceService.enrichCves(db, cveIds).catch(err => {
         console.error('CVE enrichment failed:', err.message);
@@ -406,12 +488,14 @@ async function fetchAllSources() {
       console.error('Intelligence post-processing failed:', intelErr.message);
     }
 
-    // Send notifications after storing alerts
+    // Send notifications after storing alerts (parallel, non-blocking)
     try {
-      await notificationService.sendSlackNotifications(alerts);
-      await notificationService.sendN8nWebhook(alerts);
-      await notificationService.sendTelegramNotifications(alerts);
-      await notificationService.sendTeamsWebhook(alerts);
+      await Promise.allSettled([
+        notificationService.sendSlackNotifications(alerts),
+        notificationService.sendN8nWebhook(alerts),
+        notificationService.sendTelegramNotifications(alerts),
+        notificationService.sendTeamsWebhook(alerts)
+      ]);
     } catch (notifyErr) {
       console.error('Error sending notifications:', notifyErr.message);
     }
@@ -419,45 +503,66 @@ async function fetchAllSources() {
     console.error('Error fetching alerts:', err);
   } finally {
     fetchAllSourcesRunning = false;
+    io.emit('fetch:complete');
   }
 }
 
+// Apply rate limiters
+const apiLimiter = rateLimit({ windowMs: 60000, max: 600, message: 'API rate limit exceeded (600/min)' });
+const authLimiter = rateLimit({ windowMs: 60000, max: 120, message: 'Auth rate limit exceeded (120/min)' });
+
 // Mount alerts router
 const alertsRouter = require('./routes/alerts')(db);
-app.use('/api/alerts', authMiddleware, alertsRouter);
+app.use('/api/alerts', apiLimiter, authMiddleware, alertsRouter);
 
 // Mount Auth router (Unprotected)
 const authRouter = require('./routes/auth');
-app.use('/auth', authRouter);
+app.use('/auth', authLimiter, authRouter);
 
 // Mount API routers
 const assetsRouter = require('./routes/assets')(db);
-app.use('/api/assets', authMiddleware, assetsRouter);
+app.use('/api/assets', apiLimiter, authMiddleware, assetsRouter);
 
 const vendorsRouter = require('./routes/vendors')(db);
-app.use('/api/vendors', authMiddleware, vendorsRouter);
+app.use('/api/vendors', apiLimiter, authMiddleware, vendorsRouter);
 
 const dnsImpersonationRouter = require('./routes/dns_impersonation')(db);
-app.use('/api/dns-impersonation', authMiddleware, dnsImpersonationRouter);
-app.use('/api/dns_impersonation', authMiddleware, dnsImpersonationRouter);
+app.use('/api/dns-impersonation', apiLimiter, authMiddleware, dnsImpersonationRouter);
+app.use('/api/dns_impersonation', apiLimiter, authMiddleware, dnsImpersonationRouter);
 
 const huntRouter = require('./routes/threatHunting')(db);
-app.use('/api/hunt', authMiddleware, huntRouter);
+app.use('/api/hunt', apiLimiter, authMiddleware, huntRouter);
 
 const osintRouter = require('./routes/osint')(db);
-app.use('/api/osint', authMiddleware, osintRouter);
+app.use('/api/osint', apiLimiter, authMiddleware, osintRouter);
 
-const ingestionRouter = require('./routes/ingestion')(db);
-app.use('/api/ingestion', authMiddleware, ingestionRouter);
+const ingestionRouter = require('./routes/ingestion')(db, { fetchAllSources });
+app.use('/api/ingestion', apiLimiter, authMiddleware, ingestionRouter);
+
+// Swagger API docs
+const swaggerSpec = require('./services/swagger');
+app.use('/swagger', express.static('public/swagger'));
+app.get('/api/docs.json', (req, res) => res.json(swaggerSpec));
+app.get('/api/docs', (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>ThreatDock API Docs</title><link rel="stylesheet" href="/swagger/swagger-ui.css"></head><body><div id="swagger-ui"></div><script src="/swagger/swagger-ui-bundle.js"></script><script>SwaggerUIBundle({url:"/api/docs.json",dom_id:"#swagger-ui",presets:[SwaggerUIBundle.presets.apis],layout:"BaseLayout"})</script></body></html>`);
+});
+
+// Push notification endpoint (broadcasts to all WebSocket clients)
+app.post('/api/notify', express.json(), (req, res) => {
+  const { title, body, severity } = req.body || {};
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+  io.emit('push:notification', { title, body, severity: severity || 'info', timestamp: new Date().toISOString() });
+  res.json({ sent: true });
+});
 
 const intelligenceRouter = require('./routes/intelligence')(db);
-app.use('/api/intelligence', authMiddleware, intelligenceRouter);
+app.use('/api/intelligence', apiLimiter, authMiddleware, intelligenceRouter);
 
 const usersRouter = require('./routes/users')(db);
-app.use('/api/users', authMiddleware, usersRouter);
+app.use('/api/users', apiLimiter, authMiddleware, usersRouter);
 
 const settingsRouter = require('./routes/settings')(db);
-app.use('/api/settings', authMiddleware, settingsRouter);
+app.use('/api/settings', apiLimiter, authMiddleware, settingsRouter);
 
 // Health endpoint
 app.get('/', (req, res) => {
@@ -467,12 +572,23 @@ app.get('/', (req, res) => {
 async function start() {
   await initializeDatabase(db);
 
+  // Weekly data retention prune (Sunday at 3 AM)
+  cron.schedule('0 3 * * 0', async () => {
+    try {
+      const result = await db.query(`SELECT prune_old_alerts(90) as pruned`);
+      const count = result.rows[0]?.pruned || 0;
+      if (count > 0) console.log(`Pruned ${count} old alerts.`);
+    } catch (err) {
+      console.error('Alert pruning failed:', err.message);
+    }
+  });
+
   // Initial fetch on startup
   fetchAllSources();
   // Schedule to run every hour at minute 0
   cron.schedule('0 * * * *', fetchAllSources);
 
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`Backend server listening on port ${PORT}`);
   });
 }

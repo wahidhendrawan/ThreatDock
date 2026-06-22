@@ -148,10 +148,25 @@ module.exports = function createAssetsRouter(db) {
 
   // GET /api/assets
   router.get('/', (req, res) => {
-    db.all('SELECT * FROM assets ORDER BY created_at DESC', (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
-    });
+    const hasPagination = req.query.page !== undefined || req.query.limit !== undefined;
+    if (hasPagination) {
+      const page = Math.max(1, parseInt(req.query.page) || 1);
+      const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
+      const offset = (page - 1) * limit;
+      db.get('SELECT COUNT(*) as count FROM assets', [], (countErr, countRow) => {
+        if (countErr) return res.status(500).json({ error: countErr.message });
+        const total = countRow ? countRow.count : 0;
+        db.all('SELECT * FROM assets ORDER BY created_at DESC LIMIT ? OFFSET ?', [limit, offset], (err, rows) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({ data: rows, total, page, limit });
+        });
+      });
+    } else {
+      db.all('SELECT * FROM assets ORDER BY created_at DESC', [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+      });
+    }
   });
 
   // POST /api/assets
