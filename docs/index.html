@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Centralized threat intelligence and security operations platform for SOC teams.">
+<meta name="description" content="Centralized threat intelligence and security operations platform for SOC teams. Real-time WebSocket updates, PWA support, batch ingestion, and more.">
 <title>ThreatDock | Threat Intelligence & SecOps Platform</title>
 <style>
-:root{--accent:#06b6d4;--accent-dim:#06b6d420;--bg:#0a0e1a;--surface:#111827;--border:#1f2937;--text:#f1f5f9;--muted:#94a3b8}
+:root{--accent:#06b6d4;--accent-dim:#06b6d420;--bg:#0a0e1a;--surface:#111827;--border:#1f2937;--text:#f1f5f9;--muted:#94a3b8;--green:#34d399;--orange:#fbbf24}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:Inter,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.7;overflow-x:hidden}
 a{color:inherit;text-decoration:none}
@@ -23,8 +23,13 @@ nav{position:fixed;top:0;width:100%;padding:1rem 2rem;display:flex;align-items:c
 .hero h1{font-size:clamp(2.8rem,7vw,4.5rem);font-weight:800;letter-spacing:-.02em;margin-bottom:1.5rem;line-height:1.1}
 .hero h1 span{background:linear-gradient(135deg,#06b6d4,#22d3ee,#0ea5e9);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .hero p{font-size:1.2rem;color:var(--muted);max-width:600px;margin:0 auto 2.5rem}
+.pill-group{display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin-bottom:2.5rem}
+.pill{padding:.3rem 1rem;background:var(--surface);border:1px solid var(--border);border-radius:100px;font-size:.75rem;color:var(--muted)}
+.pill.live{color:var(--green);border-color:var(--green)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.pill.live::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:.35rem;animation:pulse 1.5s ease-in-out infinite;vertical-align:middle}
 .btn-group{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
-.btn{padding:.85rem 2rem;border-radius:10px;font-weight:600;font-size:.95rem;transition:all .2s}
+.btn{padding:.85rem 2rem;border-radius:10px;font-weight:600;font-size:.95rem;transition:all .2s;display:inline-flex;align-items:center;gap:.5rem}
 .btn-primary{background:var(--accent);color:var(--bg);box-shadow:0 4px 20px rgba(6,182,212,.3)}
 .btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(6,182,212,.4)}
 .btn-ghost{border:1px solid var(--border);color:var(--text)}
@@ -40,15 +45,27 @@ nav{position:fixed;top:0;width:100%;padding:1rem 2rem;display:flex;align-items:c
 .dash-card h4{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem}
 .dash-card .value{font-size:1.8rem;font-weight:700;color:var(--accent)}
 .dash-card .sub{font-size:.8rem;color:var(--muted);margin-top:.25rem}
-.features{padding:6rem 2rem;max-width:1100px;margin:0 auto}
-.features h2{text-align:center;font-size:2.2rem;margin-bottom:.5rem}
-.features .subtitle{text-align:center;color:var(--muted);margin-bottom:3rem}
+.dash-card.live .value{color:var(--green)}
+.features,.changelog{padding:6rem 2rem;max-width:1100px;margin:0 auto}
+.features h2,.changelog h2{text-align:center;font-size:2.2rem;margin-bottom:.5rem}
+.features .subtitle,.changelog .subtitle{text-align:center;color:var(--muted);margin-bottom:3rem}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.5rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2rem;transition:all .3s}
 .card:hover{border-color:var(--accent);transform:translateY(-4px);box-shadow:0 12px 40px rgba(6,182,212,.1)}
-.card-icon{width:44px;height:44px;background:var(--accent-dim);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;margin-bottom:1rem}
+.card-icon{width:44px;height:44px;background:var(--accent-dim);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;margin-bottom:1rem;flex-shrink:0}
 .card h3{font-size:1.05rem;margin-bottom:.5rem}
 .card p{color:var(--muted);font-size:.9rem}
+.card-row{display:flex;gap:1rem;align-items:flex-start}
+.changelog-list{max-width:700px;margin:0 auto}
+.changelog-item{padding:1.5rem 0;border-bottom:1px solid var(--border)}
+.changelog-item:last-child{border-bottom:none}
+.changelog-item .tag{display:inline-block;padding:.2rem .6rem;border-radius:6px;font-size:.7rem;font-weight:600;margin-right:.5rem}
+.tag-new{background:rgba(6,182,212,.2);color:var(--accent)}
+.tag-perf{background:rgba(52,211,153,.2);color:var(--green)}
+.tag-fix{background:rgba(251,191,36,.2);color:var(--orange)}
+.changelog-item h3{font-size:1rem;margin-bottom:.3rem;display:flex;align-items:center;gap:.5rem}
+.changelog-item ul{margin:.5rem 0 0 1.2rem;color:var(--muted);font-size:.85rem}
+.changelog-item ul li{margin:.25rem 0}
 footer{padding:3rem 2rem;text-align:center;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border)}
 footer a{color:var(--accent)}
 @media(max-width:768px){.nav-links{display:none}.dash-body{grid-template-columns:1fr}}
@@ -59,6 +76,7 @@ footer a{color:var(--accent)}
 <div class="logo"><div class="logo-icon">TD</div>ThreatDock</div>
 <div class="nav-links">
 <a href="#features">Features</a>
+<a href="#changelog">v1.1</a>
 <a href="https://github.com/wahidhendrawan/ThreatDock">GitHub</a>
 </div>
 </nav>
@@ -67,33 +85,184 @@ footer a{color:var(--accent)}
 <div class="hero-content">
 <div class="chip">🛰️ Security Operations Platform</div>
 <h1>Your team's <span>threat intelligence</span> command center</h1>
-<p>Centralized platform for threat advisories, CVE tracking, IOC management, alert context enrichment, and incident case workflows.</p>
+<p>Real-time WebSocket updates, PWA support, batch ingestion at 10-50x speed, and intelligent CVE enrichment in one unified platform.</p>
+<div class="pill-group">
+<span class="pill live">Real-Time WebSocket</span>
+<span class="pill">PWA Enabled</span>
+<span class="pill">Redis Queue</span>
+<span class="pill">OpenAPI Docs</span>
+<span class="pill">PostgreSQL</span>
+</div>
 <div class="btn-group">
 <a class="btn btn-primary" href="https://github.com/wahidhendrawan/ThreatDock">Get Started</a>
-<a class="btn btn-ghost" href="https://github.com/wahidhendrawan/ThreatDock#readme">Documentation</a>
+<a class="btn btn-ghost" href="https://github.com/wahidhendrawan/ThreatDock/blob/main/README.md">Documentation</a>
 </div>
 <div class="dashboard">
 <div class="dash-bar"><span></span><span></span><span></span></div>
 <div class="dash-body">
-<div class="dash-card"><h4>Active Threats</h4><div class="value">47</div><div class="sub">12 critical, 35 high</div></div>
-<div class="dash-card"><h4>IOCs Tracked</h4><div class="value">2.4K</div><div class="sub">Last 30 days</div></div>
-<div class="dash-card"><h4>CVEs Monitored</h4><div class="value">186</div><div class="sub">23 in remediation</div></div>
-<div class="dash-card"><h4>Open Cases</h4><div class="value">8</div><div class="sub">3 pending analyst</div></div>
+<div class="dash-card"><h4>Active Threats</h4><div class="value">3.8K</div><div class="sub">Across 9 intelligence sources</div></div>
+<div class="dash-card"><h4>IOCs Tracked</h4><div class="value">3.6K</div><div class="sub">Auto-extracted & correlated</div></div>
+<div class="dash-card"><h4>CVEs Enriched</h4><div class="value">300+</div><div class="sub">KEV & EPSS scored</div></div>
+<div class="dash-card live"><h4>Live Feed</h4><div class="value">WebSocket</div><div class="sub">Real-time dashboard updates</div></div>
 </div>
 </div>
 </div>
 </section>
 
 <section class="features" id="features">
-<h2>Unified threat operations</h2>
-<p class="subtitle">Everything your SOC needs in one platform.</p>
+<h2>Next-gen threat operations</h2>
+<p class="subtitle">Enterprise features for modern SOC teams.</p>
 <div class="grid">
-<div class="card"><div class="card-icon">📡</div><h3>Intel Feeds</h3><p>Aggregate OSINT, commercial, and internal threat intel feeds into a single correlated view.</p></div>
-<div class="card"><div class="card-icon">🛡️</div><h3>CVE Prioritization</h3><p>Context-aware vulnerability scoring based on asset exposure, exploit availability, and threat actor activity.</p></div>
-<div class="card"><div class="card-icon">🔗</div><h3>IOC Enrichment</h3><p>Automatic enrichment of indicators with reputation, geolocation, WHOIS, and related campaign data.</p></div>
-<div class="card"><div class="card-icon">📋</div><h3>Case Management</h3><p>Structure incident investigations with timelines, evidence, assignments, and resolution tracking.</p></div>
-<div class="card"><div class="card-icon">🔔</div><h3>Alert Context</h3><p>Enrich SIEM alerts with threat intel context for faster triage and reduced false positives.</p></div>
-<div class="card"><div class="card-icon">📊</div><h3>Reporting</h3><p>Executive dashboards, operational metrics, and automated briefings for stakeholders.</p></div>
+<div class="card">
+<div class="card-row">
+<div class="card-icon">⚡</div>
+<div><h3>Batch Ingestion</h3><p>Bulk INSERT (1000 rows per batch) replaces row-by-row — up to 50x faster ingestion across 9 intelligence sources.</p></div>
+</div>
+</div>
+<div class="card">
+<div class="card-row">
+<div class="card-icon">🔌</div>
+<div><h3>Real-Time Updates</h3><p>Socket.IO WebSocket server pushes live events — alerts, source health, and correlations update without page refresh.</p></div>
+</div>
+</div>
+<div class="card">
+<div class="card-row">
+<div class="card-icon">💾</div>
+<div><h3>Intelligent Caching</h3><p>Settings cache (5 min TTL), CVE freshness gate (24h skip), and correlation rebuild memoization.</p></div>
+</div>
+</div>
+<div class="card">
+<div class="card-row">
+<div class="card-icon">📄</div>
+<div><h3>OpenAPI Docs</h3><p>Self-hosted Swagger UI at /api/docs with full endpoint documentation — no CDN dependencies.</p></div>
+</div>
+</div>
+<div class="card">
+<div class="card-row">
+<div class="card-icon">📱</div>
+<div><h3>PWA Ready</h3><p>Service worker with network-first caching, manifest.json, push notification support, and auto-update on deploy.</p></div>
+</div>
+</div>
+<div class="card">
+<div class="card-row">
+<div class="card-icon">🔄</div>
+<div><h3>Redis Queue</h3><p>Optionally backed by Bull + Redis 7. Graceful fallback to in-memory when Redis is unavailable.</p></div>
+</div>
+</div>
+<div class="card">
+<div class="card-row">
+<div class="card-icon">🔍</div>
+<div><h3>N+1 Optimization</h3><p>Word-indexed asset matching replaces O(n*m) nested loops — correlation rebuild now finishes in seconds.</p></div>
+</div>
+</div>
+<div class="card">
+<div class="card-row">
+<div class="card-icon">🛡️</div>
+<div><h3>Rate Limiter</h3><p>In-memory sliding window rate limiter: auth 120/min, API 600/min per IP. X-Forwarded-For aware.</p></div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="changelog" id="changelog">
+<h2>Changelog</h2>
+<p class="subtitle">What's new in ThreatDock v1.1</p>
+<div class="changelog-list">
+
+<div class="changelog-item">
+<h3><span class="tag tag-new">NEW</span> Real-Time WebSocket</h3>
+<ul>
+<li>Socket.IO server with live events: <code>alerts:updated</code>, <code>source:health</code>, <code>correlations:updated</code>, <code>fetch:complete</code></li>
+<li>Frontend auto-refresh for dashboard, alerts, and IntelOperations</li>
+<li>Live source-health pulse indicators with CSS animation</li>
+<li>Nginx WebSocket upgrade proxy</li>
+</ul>
+</div>
+
+<div class="changelog-item">
+<h3><span class="tag tag-perf">PERF</span> Batch INSERT (10-50x Faster)</h3>
+<ul>
+<li>Bulk INSERT (1000 rows) for alerts, indicators, and CVE enrichment</li>
+<li>Settings cache with 5-min TTL — eliminates redundant DB queries per fetch cycle</li>
+<li>Parallel notifications via <code>Promise.allSettled</code> — 4 channels concurrent</li>
+<li>CVE enrichment skips data refreshed within 24 hours</li>
+<li>N+1 query elimination: word-index O(1) asset matching</li>
+<li>Batch INSERT for correlation findings INSERT</li>
+</ul>
+</div>
+
+<div class="changelog-item">
+<h3><span class="tag tag-new">NEW</span> API Documentation</h3>
+<ul>
+<li>OpenAPI 3.0 specification served at <code>/api/docs.json</code></li>
+<li>Self-hosted Swagger UI at <code>/api/docs</code> — no CDN required</li>
+<li>All endpoints documented with request/response schemas</li>
+<li>Interactive "Try it out" for each endpoint</li>
+</ul>
+</div>
+
+<div class="changelog-item">
+<h3><span class="tag tag-new">NEW</span> PWA Support</h3>
+<ul>
+<li>Service worker with network-first navigation strategy</li>
+<li>Manifest.json for standalone install mode</li>
+<li>Push notification endpoint <code>POST /api/notify</code></li>
+<li>Self-destruct mode to clear stale caches on version mismatch</li>
+</ul>
+</div>
+
+<div class="changelog-item">
+<h3><span class="tag tag-new">NEW</span> Rate Limiter</h3>
+<ul>
+<li>In-memory sliding window rate limiter</li>
+<li>Auth endpoints: 120 requests/minute per IP</li>
+<li>API endpoints: 600 requests/minute per IP</li>
+<li>X-Forwarded-For aware for correct IP detection behind Nginx</li>
+</ul>
+</div>
+
+<div class="changelog-item">
+<h3><span class="tag tag-perf">PERF</span> Infrastructure & Database</h3>
+<ul>
+<li>PostgreSQL connection pool increased 10→25</li>
+<li>6 new composite database indexes for time-series queries</li>
+<li>Redis 7 service with Bull queue support (graceful in-memory fallback)</li>
+<li>Weekly data retention cron (prunes alerts >90 days)</li>
+<li>PostgreSQL partitioning migration script</li>
+</ul>
+</div>
+
+<div class="changelog-item">
+<h3><span class="tag tag-new">NEW</span> Pagination (Backward-Compatible)</h3>
+<ul>
+<li><code>GET /api/alerts</code> — optional <code>?page=&limit=</code> returns <code>{data, total, page, limit}</code></li>
+<li><code>GET /api/assets</code> — same pagination format</li>
+<li><code>GET /api/intelligence/indicators</code> and <code>/correlations</code> — paginated</li>
+<li>All endpoints return legacy array format when no pagination params given</li>
+</ul>
+</div>
+
+<div class="changelog-item">
+<h3><span class="tag tag-new">NEW</span> Manual Fetch & Timeout Safety</h3>
+<ul>
+<li><code>POST /api/ingestion/fetch</code> — trigger immediate source ingestion</li>
+<li>"Fetch Sources" button in IntelOperations UI</li>
+<li>30-minute automatic lock reset for stuck ingestion runs</li>
+<li>Per-source timeout (60s max) via <code>Promise.race</code></li>
+</ul>
+</div>
+
+<div class="changelog-item">
+<h3><span class="tag tag-fix">FIX</span> Bug Fixes</h3>
+<ul>
+<li>Deduplication before batch INSERT to prevent ON CONFLICT errors</li>
+<li>Content-Security-Policy relaxed for Swagger UI (local assets)</li>
+<li>IP detection via X-Forwarded-For behind nginx proxy</li>
+<li>Service worker cache-busting with no-cache nginx headers</li>
+<li>TimeoutOverflowWarning suppression via --no-warnings flag</li>
+</ul>
+</div>
+
 </div>
 </section>
 
