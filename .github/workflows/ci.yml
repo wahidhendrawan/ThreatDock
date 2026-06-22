@@ -46,7 +46,7 @@ jobs:
             var ok=0,fail=0;
             var a=(c,m)=>{if(c)ok++;else{fail++;console.log('FAIL:',m);}};
             a(i.normalizeSeverity('critical')==='Critical','ns');
-            a(i.detectIndicatorType('CVE-2024-1')==='cve','det');
+            a(i.detectIndicatorType('CVE-2024-12345')==='cve','det');
             a(i.extractCves('CVE-2024-12345').length===1,'ext');
             a(i.extractDomains('test.com').includes('test.com'),'dom');
             a(i.severityOrder.Critical===4,'ord');
