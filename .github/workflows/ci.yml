@@ -4,7 +4,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Create env files for validation
         run: |
           find . -name '*.env.example' -exec sh -c 'cp "$1" "${1%.example}"' _ {} \;
@@ -16,25 +16,29 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Install dependencies
         working-directory: backend
         run: npm install
-      - name: Run unit tests
+      - name: Create __mocks__ for axios (avoids network dependency in CI)
         working-directory: backend
-        run: npx jest --forceExit --no-cache 2>&1 || npm test -- --forceExit --no-cache 2>&1 || true
-      - name: Create __mocks__ for axios
+        run: |
+          mkdir -p __mocks__
+          cat > __mocks__/axios.js << 'EOF'
+          module.exports = {
+            get: () => Promise.resolve({ data: {} }),
+            post: () => Promise.resolve({ data: {} }),
+            create: () => ({ get: () => Promise.resolve({ data: {} }), post: () => Promise.resolve({ data: {} }) }),
+            default: { get: () => Promise.resolve({ data: {} }), post: () => Promise.resolve({ data: {} }) }
+          };
+          EOF
+      - name: Run Jest unit tests
         working-directory: backend
-        run: node -e "
-          const fs = require('fs');
-          const d = '__mocks__';
-          if (!fs.existsSync(d)) fs.mkdirSync(d);
-          fs.writeFileSync(d+'/axios.js', 'module.exports={get:()=>Promise.resolve({data:{}}),post:()=>Promise.resolve({data:{}})}');
-        "
-      - name: Manual test run
+        run: npx jest --forceExit --no-cache --passWithNoTests 2>&1
+      - name: Manual intelligence service test
         working-directory: backend
         run: |
           node -e "
@@ -46,13 +50,15 @@ jobs:
             a(i.extractCves('CVE-2024-12345').length===1,'ext');
             a(i.extractDomains('test.com').includes('test.com'),'dom');
             a(i.severityOrder.Critical===4,'ord');
+            a(i.extractCves('').length===0,'empty');
+            a(i.extractCves(null).length===0,'null');
             console.log(ok+'/'+(ok+fail)+' passed');
             process.exit(fail>0?1:0);
-          "
+          " 2>&1
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
