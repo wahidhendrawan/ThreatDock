@@ -51,3 +51,19 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  db-backup:
+    image: postgres:16-alpine
+    entrypoint: >
+      sh -c "echo '0 */6 * * * /usr/local/bin/backup.sh' > /etc/crontabs/root && crond -f -l 2"
+    environment:
+      PGUSER: ${POSTGRES_USER:-threatdock}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-threatdock_change_me}
+      PGDATABASE: ${POSTGRES_DB:-threatdock}
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped

@@ -391,6 +391,7 @@ module.exports = {
   extractCves,
   extractDomains,
   normalizeSeverity,
+  maxSeverity,  // used by worker.js
   rebuildCorrelations,
   saveIndicatorsFromAlerts,
   enrichCves,

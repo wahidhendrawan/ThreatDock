@@ -4,6 +4,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { schedule } = require('./services/scheduler');
+const errorMonitor = require('./services/errorMonitor');
 
 const githubService = require('./services/github');
 const nvdService = require('./services/nvd');
@@ -19,6 +20,7 @@ const settingsStore = require('./services/settingsStore');
 const dbUtil = require('./services/db');
 const { createDatabase, initializeDatabase } = require('./services/database');
 const { JobQueue } = require('./services/queue');
+const { runRebuildCorrelations } = require('./services/worker');
 
 const authMiddleware = require('./middleware/auth');
 const rateLimit = require('./middleware/rateLimit');
@@ -52,11 +54,8 @@ app.disable('x-powered-by');
 // Trust proxy for correct IP detection behind nginx
 app.set('trust proxy', 1);
 
-// Suppress harmless TimeoutOverflowWarning from internal libs (Node 25+)
-process.on('warning', (warning) => {
-  if (warning.name === 'TimeoutOverflowWarning') return;
-  console.warn(warning.name, warning.message);
-});
+// Initialize error monitoring (global handlers + express middleware)
+errorMonitor.init(app);
 
 // Create HTTP server and WebSocket
 const server = http.createServer(app);
@@ -505,7 +504,13 @@ async function fetchAllSources() {
 
     try {
       await intelligenceService.saveIndicatorsFromAlerts(db, alerts);
-      await intelligenceService.rebuildCorrelations(db);
+      // Use worker thread for CPU-heavy correlation rebuild
+      try {
+        await runRebuildCorrelations(db);
+      } catch (err) {
+        console.error('Worker correlation rebuild failed, falling back to inline:', err.message);
+        await intelligenceService.rebuildCorrelations(db);
+      }
       io.emit('correlations:updated');
       const cveIds = [...new Set(alerts.flatMap(alert => intelligenceService.extractCves(`${alert.externalId || ''} ${alert.title || ''}`)))];
       intelligenceService.enrichCves(db, cveIds).catch(err => {

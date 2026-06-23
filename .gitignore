@@ -26,3 +26,6 @@ yarn-error.log*
 
 # Coverage
 coverage/
+backups/
+data/backups/
+*.sql.gz

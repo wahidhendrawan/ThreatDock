@@ -82,6 +82,65 @@ module.exports = function createIntelligenceRouter(db) {
     }
   });
 
+  // GET /indicators/export — export IOCs in JSON, CSV, or STIX format
+  router.get('/indicators/export', (req, res) => {
+    const format = (req.query.format || 'json').toLowerCase();
+    const { type, source, search } = req.query;
+    const conditions = [];
+    const params = [];
+    if (type) { conditions.push('type = ?'); params.push(type); }
+    if (source) { conditions.push('source = ?'); params.push(source); }
+    if (search) {
+      conditions.push('(value LIKE ? OR externalId LIKE ? OR malware_family LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const limit = Math.min(10000, parseInt(req.query.limit || '5000'));
+
+    db.all(`SELECT * FROM indicators${whereClause} ORDER BY updated_at DESC LIMIT ?`, [...params, limit], (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const items = rows || [];
+
+      if (format === 'csv') {
+        const header = 'value,type,source,severity,confidence,first_seen,last_seen,malware_family,tlp';
+        const lines = items.map(i =>
+          `"${(i.value||'').replace(/"/g,'""')}","${i.type||''}","${i.source||''}","${i.severity||''}",${i.confidence||''},"${i.first_seen||''}","${i.last_seen||''}","${i.malware_family||''}","${i.tlp||'TLP:AMBER'}"`
+        );
+        res.set('Content-Type', 'text/csv');
+        res.set('Content-Disposition', 'attachment; filename="threatdock-iocs.csv"');
+        return res.send([header, ...lines].join('\n'));
+      }
+
+      if (format === 'stix') {
+        const stix = {
+          type: 'bundle',
+          id: 'bundle--' + require('crypto').randomUUID(),
+          spec_version: '2.1',
+          objects: items.map(i => ({
+            type: 'indicator',
+            id: `indicator--${require('crypto').randomUUID()}`,
+            created: i.first_seen || new Date().toISOString(),
+            modified: i.last_seen || new Date().toISOString(),
+            name: i.value || '',
+            description: `ThreatDock IOC from ${i.source || 'unknown'} (${i.type || 'unknown'})`,
+            pattern: `[${i.type || 'file:hashes'}:value = '${(i.value||'').replace(/'/g,"\\'")}']`,
+            pattern_type: 'stix',
+            valid_from: i.first_seen || new Date().toISOString(),
+            indicator_types: ['malicious-activity'],
+            severity: i.severity || 'Unknown'
+          }))
+        };
+        res.set('Content-Type', 'application/json');
+        res.set('Content-Disposition', 'attachment; filename="threatdock-iocs-stix.json"');
+        return res.json(stix);
+      }
+
+      // Default: JSON
+      res.set('Content-Disposition', 'attachment; filename="threatdock-iocs.json"');
+      res.json(items);
+    });
+  });
+
   router.get('/correlations', (req, res) => {
     const hasPagination = req.query.page !== undefined || req.query.limit !== undefined;
     if (hasPagination) {
