@@ -3,7 +3,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const cron = require('node-cron');
+const { schedule } = require('./services/scheduler');
 
 const githubService = require('./services/github');
 const nvdService = require('./services/nvd');
@@ -164,20 +164,47 @@ function recordSourceRun(source, status, itemCount, durationMs, error, startedAt
   io.emit('source:health', { source, status, itemCount, durationMs });
 }
 
+/**
+ * Fetch from a source with retry (exponential backoff), health tracking, and timeout.
+ */
+const RETRY_CONFIGS = {
+  'NVD': { retries: 2, baseDelay: 2000 },
+  'OTX': { retries: 2, baseDelay: 2000 },
+  'RSS': { retries: 1, baseDelay: 1000 },
+  'Red Hat': { retries: 1, baseDelay: 1000 },
+  'GitHub': { retries: 2, baseDelay: 1000 },
+  'ThreatFox': { retries: 1, baseDelay: 1000 },
+  default: { retries: 1, baseDelay: 1000 }
+};
+
 async function fetchSourceWithHealth(source, fetcher) {
   const startedAt = new Date().toISOString();
   const start = Date.now();
-  try {
-    const data = await fetcher();
-    const finishedAt = new Date().toISOString();
-    recordSourceRun(source, 'Success', countFetchedItems(source, data), Date.now() - start, '', startedAt, finishedAt);
-    return data;
-  } catch (err) {
-    const finishedAt = new Date().toISOString();
-    recordSourceRun(source, 'Failure', 0, Date.now() - start, err.message, startedAt, finishedAt);
-    console.error(`${source} fetch failed:`, err.message);
-    return [];
+  const cfg = RETRY_CONFIGS[source] || RETRY_CONFIGS.default;
+  let lastErr = null;
+  for (let attempt = 0; attempt <= cfg.retries; attempt++) {
+    if (attempt > 0) {
+      const delay = cfg.baseDelay * Math.pow(2, attempt - 1);
+      console.log(`${source} retry ${attempt}/${cfg.retries} (delay ${delay}ms)...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+    try {
+      const data = await fetcher();
+      const finishedAt = new Date().toISOString();
+      recordSourceRun(source, 'Success', countFetchedItems(source, data), Date.now() - start, '', startedAt, finishedAt);
+      return data;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < cfg.retries) {
+        // Transient error — will retry
+        console.warn(`${source} attempt ${attempt + 1} failed: ${err.message}`);
+      }
+    }
   }
+  const finishedAt = new Date().toISOString();
+  recordSourceRun(source, 'Failure', 0, Date.now() - start, lastErr.message, startedAt, finishedAt);
+  console.error(`${source} fetch failed after ${cfg.retries} retries:`, lastErr.message);
+  return [];
 }
 
 async function persistAlerts(alerts) {
@@ -573,7 +600,7 @@ async function start() {
   await initializeDatabase(db);
 
   // Weekly data retention prune (Sunday at 3 AM)
-  cron.schedule('0 3 * * 0', async () => {
+  schedule('0 3 * * 0', async () => {
     try {
       const result = await db.query(`SELECT prune_old_alerts(90) as pruned`);
       const count = result.rows[0]?.pruned || 0;
@@ -581,12 +608,12 @@ async function start() {
     } catch (err) {
       console.error('Alert pruning failed:', err.message);
     }
-  });
+  }, { name: 'alert-prune' });
 
   // Initial fetch on startup
   fetchAllSources();
   // Schedule to run every hour at minute 0
-  cron.schedule('0 * * * *', fetchAllSources);
+  schedule('0 * * * *', fetchAllSources, { name: 'source-fetch' });
 
   server.listen(PORT, () => {
     console.log(`Backend server listening on port ${PORT}`);

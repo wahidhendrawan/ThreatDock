@@ -7,9 +7,23 @@ const container = document.getElementById('root');
 const root = createRoot(container);
 root.render(<App />);
 
-// Self-destruct any stale service worker
+// PWA: register service worker with auto-update
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then((regs) => {
-    regs.forEach((reg) => reg.unregister());
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' }).then((reg) => {
+      // Auto-refresh when new version is installed
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (newWorker) {
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              newWorker.postMessage({ action: 'skipWaiting' });
+            }
+          });
+        }
+      });
+    }).catch((err) => {
+      console.warn('Service worker registration failed:', err);
+    });
   });
 }

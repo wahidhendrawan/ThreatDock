@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 
 import PaginationControls, { usePagination } from '../components/PaginationControls';
-import { io } from 'socket.io-client';
+import ws from '../socket';
 
 // Helper to build auth headers
 function getAuthHeaders(authData) {
@@ -185,6 +185,12 @@ export function AssetDiscovery({ authData }) {
 
   useEffect(() => {
     fetchAssets();
+  }, []);
+
+  // Real-time refresh on data changes
+  useEffect(() => {
+    const unsub = ws.on('fetch:complete', () => fetchAssets());
+    return () => unsub();
   }, []);
 
   const fetchAssets = async () => {
@@ -1430,6 +1436,12 @@ export function BrandExposure({ authData }) {
     handleSearch();
   }, [fetchSettings]);
 
+  // Real-time refresh on data changes
+  useEffect(() => {
+    const unsub = ws.on('fetch:complete', () => handleSearch());
+    return () => unsub();
+  }, []);
+
   const monitoredBrands = useMemo(() => {
     try {
       return JSON.parse(settings?.MONITORED_BRANDS || '[]');
@@ -1758,6 +1770,12 @@ export function ThirdPartyRisk({ authData }) {
     fetchVendors();
   }, []);
 
+  // Real-time refresh on data changes
+  useEffect(() => {
+    const unsub = ws.on('fetch:complete', () => fetchVendors());
+    return () => unsub();
+  }, []);
+
   const fetchVendors = async () => {
     try {
       const res = await fetch('/api/vendors', { headers: getAuthHeaders(authData) });
@@ -1930,20 +1948,18 @@ export function IntelOperations({ authData }) {
 
   // WebSocket auto-refresh with live source tracking
   useEffect(() => {
-    const socket = io({ transports: ['polling', 'websocket'], autoConnect: true });
-    socket.on('source:health', (data) => {
+    const unsub1 = ws.on('source:health', (data) => {
       if (data && data.source) {
         setLiveSources(prev => ({ ...prev, [data.source]: Date.now() }));
-        // Clear the "live" highlight after 5 seconds
         setTimeout(() => setLiveSources(prev => { const n = { ...prev }; delete n[data.source]; return n; }), 5000);
       }
       setLastUpdated(new Date().toLocaleTimeString());
       loadOperations();
     });
-    socket.on('alerts:updated', () => { loadOperations(); });
-    socket.on('correlations:updated', () => { loadOperations(); });
-    socket.on('fetch:complete', () => { setLastUpdated(new Date().toLocaleTimeString()); });
-    return () => { socket.disconnect(); };
+    const unsub2 = ws.on('alerts:updated', () => { loadOperations(); });
+    const unsub3 = ws.on('correlations:updated', () => { loadOperations(); });
+    const unsub4 = ws.on('fetch:complete', () => { setLastUpdated(new Date().toLocaleTimeString()); });
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
   const rebuildCorrelations = async () => {

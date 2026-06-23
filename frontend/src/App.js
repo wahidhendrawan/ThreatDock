@@ -5,7 +5,7 @@ import Layout from './components/Layout';
 import Filters from './components/Filters';
 import AlertList from './components/AlertList';
 import Stats from './components/Stats';
-import { io } from 'socket.io-client';
+import ws from './socket';
 import {
   ThreatHunting, AssetDiscovery, ExposureMonitoring, AssetIntelligence,
   VulnPrioritization, PredictiveIntel, ThreatAnalysis, DigitalRisk,
@@ -149,8 +149,7 @@ function AppContent() {
   // SSO State
   const [ssoConfig, setSsoConfig] = useState(null);
 
-  // WebSocket connection for real-time updates
-  const [socket] = useState(() => io({ transports: ['polling', 'websocket'], autoConnect: false }));
+  // WebSocket connection for real-time updates (shared singleton)
 
   useEffect(() => {
     fetch(`${API_BASE}/auth/config`)
@@ -250,15 +249,13 @@ function AppContent() {
       });
   }, [severityFilter, sourceFilter, statusFilter, startDate, endDate, page, authData, location.pathname]);
 
-  // WebSocket connection — connect on auth, listen for real-time events
+  // WebSocket connection — listen for real-time events
   useEffect(() => {
-    if (authData && !socket.connected) {
-      socket.connect();
-    }
-    socket.on('alerts:updated', () => {
+    if (!authData) return;
+    const unsubAlert = ws.on('alerts:updated', () => {
       if (shouldFetchAlerts) fetchAlerts();
     });
-    socket.on('push:notification', (data) => {
+    const unsubPush = ws.on('push:notification', (data) => {
       if (!('Notification' in window)) return;
       if (Notification.permission === 'granted') {
         new Notification(data.title, { body: data.body, icon: '/logo192.png' });
@@ -268,8 +265,8 @@ function AppContent() {
         });
       }
     });
-    return () => { socket.off('alerts:updated'); socket.off('push:notification'); };
-  }, [authData, shouldFetchAlerts, socket, fetchAlerts]);
+    return () => { unsubAlert(); unsubPush(); };
+  }, [authData, shouldFetchAlerts, fetchAlerts]);
 
   // Reset page to 1 when filters change
   useEffect(() => {
@@ -395,7 +392,7 @@ function AppContent() {
   };
 
   const handleLogout = () => {
-    socket.disconnect();
+    ws.disconnect();
     localStorage.removeItem('threatdock_token');
     localStorage.removeItem('threatdock_user');
     setAuthData(null);
