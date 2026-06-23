@@ -3,7 +3,7 @@
 # ThreatDock 🛡️
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL-3.0-blue.svg)](https://github.com/wahidhendrawan/ThreatDock/blob/main/LICENSE)
-[![Release](https://img.shields.io/badge/release-v1.1.0-green.svg)](https://github.com/wahidhendrawan/ThreatDock/releases)
+[![Release](https://img.shields.io/badge/release-v1.2.0-green.svg)](https://github.com/wahidhendrawan/ThreatDock/releases)
 [![CI](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml/badge.svg)](https://github.com/wahidhendrawan/ThreatDock/actions)
 [![Pages](https://img.shields.io/badge/docs-🌐-orange.svg)](https://wahidhendrawan.github.io/ThreatDock/)
 
@@ -27,9 +27,11 @@ ThreatDock is designed to centralize and automate the workflow of Security Opera
 - **IOC Registry**: Automatic extraction and correlation of CVEs, IPs, domains, hashes from all ingested sources.
 - **CISA KEV / FIRST EPSS**: Automatic enrichment of CVEs with Known Exploited Vulnerability and Exploit Prediction scoring.
 - **Cross-Source Correlations**: AI-free correlation engine linking alerts, indicators, assets, and vendors into unified findings.
+- **Resilient Fetch**: Exponential backoff retry (per-source config) for NVD, OTX, and other external sources.
 
-### Performance & Architecture (v1.1)
+### Performance & Architecture (v1.2)
 - **Batch Database Operations**: Bulk INSERT (1000 rows) for alerts, indicators, and CVE enrichment — 10-50x faster ingestion.
+- **Worker Thread Processing**: CPU-intensive correlation rebuild runs in a dedicated worker thread — no event loop blocking.
 - **Real-Time WebSocket Updates**: Dashboard, alerts, and IntelOperations auto-refresh via Socket.IO — no manual refresh needed.
 - **Server-Side Pagination**: Scalable `{data, total, page, limit}` response format for alerts, assets, indicators, and correlations.
 - **In-Memory Job Queue**: Lightweight queue with optional Redis/Bull backing for parallel source fetching.
@@ -38,6 +40,7 @@ ThreatDock is designed to centralize and automate the workflow of Security Opera
 - **N+1 Query Elimination**: Word-index-based asset matching replaces O(n*m) nested loops in correlation engine.
 - **Data Retention**: Weekly automatic pruning of alerts older than 90 days (configurable).
 - **In-Memory Rate Limiter**: Per-IP sliding window — auth 120/min, API 600/min.
+- **Decoupled Scheduler**: Cron jobs run via `process.nextTick` to prevent "missed execution" during long fetch cycles.
 
 ### Platform & UX
 - **Real-Time Live Indicators**: IntelOperations shows live source-health pulse with animated dot indicators.
@@ -46,6 +49,7 @@ ThreatDock is designed to centralize and automate the workflow of Security Opera
 - **Manual Fetch Trigger**: "Fetch Sources" button in IntelOperations triggers immediate ingestion cycle.
 - **Timeout Safety**: 30-minute automatic lock reset for stuck ingestion runs.
 - **Parallel Notifications**: Slack, Teams, Telegram, and n8n webhooks sent concurrently via `Promise.allSettled`.
+- **Dark/Light Theme Toggle**: Built-in theme switcher with localStorage persistence.
 
 ### Detection & Response
 - **Contextual Asset Intelligence**: Deeply enriches assets with mapped CVEs, active IOCs, vendor risks, and OSINT findings.
@@ -54,18 +58,22 @@ ThreatDock is designed to centralize and automate the workflow of Security Opera
 - **Operational Intel Health**: Collector health dashboard, ingestion history, IOC registry, and cross-source correlations.
 - **Context-Rich Threat Analysis**: Visual MITRE ATT&CK distribution and deep correlation mapping.
 - **Dynamic Configuration**: UI-driven API key management with active validation status.
+- **IOC Export**: Export indicators in JSON, CSV, or STIX 2.1 format for SIEM ingestion (`GET /api/intelligence/indicators/export`).
 
 ### Infrastructure
 - **Enterprise Architecture**: Built-in Nginx Reverse Proxy handles API routing transparently.
 - **PostgreSQL 16**: With composite indexes for time-series query performance.
-- **Docker Compose**: Single-command deployment with all services.
+- **Docker Compose**: Single-command deployment with 5 services (postgres, redis, backend, frontend, db-backup).
+- **Automated DB Backups**: `db-backup` service runs `pg_dump` every 6 hours with 30-day retention.
+- **Error Monitoring**: Global unhandled rejection/exception capture with rotating log files and optional webhook alerts.
 - **Automated Notifications**: Slack, Microsoft Teams, Telegram, and n8n webhooks with customizable severity thresholds.
+- **NVD Optimization**: Payload stripping reduces CVE response size by 90%+, AbortController timeout, 24h polling window.
 
 ---
 
 ## 🛠️ Tech Stack
-- **Frontend**: React 18, React Router, Recharts, Lucide Icons, Vanilla CSS (Premium Dark Theme), Socket.IO Client
-- **Backend**: Node.js, Express.js, Socket.IO, node-cron
+- **Frontend**: React 18, React Router, Recharts, Lucide Icons, Vanilla CSS (Premium Dark/Light Themes), Socket.IO Client
+- **Backend**: Node.js, Express.js, Socket.IO, Worker Threads, node-cron
 - **Database**: PostgreSQL 16, optional Redis 7 for queue
 - **Infrastructure**: Docker, Docker Compose, Nginx Reverse Proxy
 
@@ -135,6 +143,7 @@ open http://localhost:3000/api/docs
 | `GET` | `/api/alerts?page=&limit=` | Paginated alerts with filters |
 | `GET` | `/api/assets?page=&limit=` | Paginated asset inventory |
 | `GET` | `/api/intelligence/indicators` | IOC registry |
+| `GET` | `/api/intelligence/indicators/export?format=csv` | IOC export (json, csv, stix) |
 | `GET` | `/api/intelligence/correlations` | Correlated findings |
 | `GET` | `/api/ingestion/health` | Source health status |
 | `POST` | `/api/ingestion/fetch` | Manual source fetch trigger |
@@ -153,10 +162,29 @@ Unit tests cover intelligence service (severity normalization, CVE extraction, d
 
 ---
 
+## 🗂️ Deployment Architecture
+
+```
+┌─────────────┐     ┌──────────────┐     ┌──────────────┐
+│  Nginx:3000  │────▶│  Backend:5002 │────▶│ PostgreSQL   │
+│  (Frontend)  │     │  (Express)   │     │  (Postgres)  │
+└─────────────┘     │  + Socket.IO │     └──────────────┘
+                    │  + Worker    │     ┌──────────────┐
+                    │  + Scheduler │────▶│  Redis:6379  │
+                    └──────────────┘     │  (Optional)  │
+                    ┌──────────────┐     └──────────────┘
+                    │  db-backup   │
+                    │  (pg_dump    │
+                    │   6h cron)   │
+                    └──────────────┘
+```
+
+---
+
 ## 🛡️ Detection & Defensive Context
 ThreatDock is designed to facilitate the **Blue Team** workflow. By aggregating various feeds, it provides:
 1. **Early Warning**: Automated tracking of new CVEs relevant to your tech stack.
-2. **Detection Enrichment**: Export IOCs for ingestion into SIEM (Wazuh/ELK) or EDR.
+2. **Detection Enrichment**: Export IOCs in CSV/STIX format for ingestion into SIEM (Wazuh/ELK) or EDR.
 3. **SOAR Integration**: Built-in webhooks allow easy connection to tools like **n8n** for automated incident response.
 
 ---
