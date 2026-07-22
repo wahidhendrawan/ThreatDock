@@ -23,7 +23,7 @@ module.exports = async function(req, res, next) {
       
       // Try local JWT first
       try {
-        const decoded = jwt.verify(token, settings.JWT_SECRET);
+        const decoded = jwt.verify(token, settings.JWT_SECRET, { algorithms: ['HS256'] });
         if (decoded) {
           req.user = decoded;
           return next();
