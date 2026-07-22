@@ -505,7 +505,10 @@ async function createSchema(db) {
     'CREATE INDEX IF NOT EXISTS idx_osint_findings_cat_key ON osint_findings(category, keyword)',
     'CREATE INDEX IF NOT EXISTS idx_alerts_severity_date ON alerts(severity, date)',
     'CREATE INDEX IF NOT EXISTS idx_alerts_source_date ON alerts(source, date)',
-    'CREATE INDEX IF NOT EXISTS idx_alerts_status_date ON alerts(status, date)'
+    'CREATE INDEX IF NOT EXISTS idx_alerts_status_date ON alerts(status, date)',
+    'CREATE INDEX IF NOT EXISTS idx_alert_comments_alert_id ON alert_comments(alert_id)',
+    'CREATE INDEX IF NOT EXISTS idx_correlated_findings_score_updated ON correlated_findings(score DESC, updated_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_ingestion_runs_started_at ON ingestion_runs(started_at DESC)'
   ];
 
   for (const statement of statements) {
