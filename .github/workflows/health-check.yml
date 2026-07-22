@@ -1,0 +1,34 @@
+name: Repository Health
+
+on:
+  schedule:
+    - cron: "23 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate repository metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install PyYAML==6.0.3
+      - name: Validate YAML metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          paths = list(Path(".github/workflows").glob("*.yml"))
+          paths += list(Path(".github/workflows").glob("*.yaml"))
+          paths += [path for path in (Path(".github/dependabot.yml"), Path(".github/dependabot.yaml")) if path.exists()]
+          for path in paths:
+              with path.open(encoding="utf-8") as stream:
+                  yaml.safe_load(stream)
+              print(f"validated {path}")
+          PY
