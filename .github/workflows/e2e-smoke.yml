@@ -1,0 +1,90 @@
+name: E2E Smoke Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "docker-compose.yml"
+      - ".github/workflows/e2e-smoke.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "docker-compose.yml"
+      - ".github/workflows/e2e-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Docker Compose smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare environment
+        run: |
+          mkdir -p backend
+          if [ ! -f backend/.env ]; then
+            cat > backend/.env <<EOF
+          POSTGRES_DB=threatdock
+          POSTGRES_USER=threatdock
+          POSTGRES_PASSWORD=ci-smoke-password
+          JWT_SECRET=ci-smoke-test-secret
+          EOF
+          fi
+
+      - name: Build and start stack
+        run: docker compose up -d --build postgres redis backend frontend
+
+      - name: Wait for backend
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:5002/ >/dev/null 2>&1; then
+              echo "Backend ready after ${i}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Backend did not respond within 180s"
+          docker compose logs backend | tail -80
+          exit 1
+
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ >/dev/null 2>&1; then
+              echo "Frontend ready after ${i}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Frontend did not respond within 60s"
+          docker compose logs frontend | tail -50
+          exit 1
+
+      - name: Smoke check - health endpoints
+        run: |
+          echo "=== Backend root ==="
+          curl -fsS http://localhost:5002/
+          echo ""
+          echo "=== Auth config (unauthenticated) ==="
+          curl -fsS http://localhost:5002/auth/config | head -c 200
+          echo ""
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs backend | tail -100
+          docker compose logs frontend | tail -50
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v
