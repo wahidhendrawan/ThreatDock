@@ -7,6 +7,8 @@ const { exchangeCodeForToken, getUserInfo } = require('../services/oauth');
 const settingsStore = require('../services/settingsStore');
 
 const router = express.Router();
+const TEMP_JWT_OPTIONS = { algorithm: 'HS256', expiresIn: '5m' };
+const ACCESS_JWT_OPTIONS = { algorithm: 'HS256', expiresIn: '8h' };
 
 const verifyMfaCode = (code, secret) => {
   if (!/^\d{6}$/.test(String(code || ''))) return false;
@@ -115,7 +117,7 @@ router.post('/callback', async (req, res) => {
         const hasConfiguredMfa = Boolean(dbUser.mfa_enabled && dbUser.mfa_secret);
 
         if (mustUseMfa) {
-          const tempToken = jwt.sign({ id: dbUser.id, mfaPending: true }, settings.JWT_SECRET, { expiresIn: '5m' });
+          const tempToken = jwt.sign({ id: dbUser.id, mfaPending: true }, settings.JWT_SECRET, TEMP_JWT_OPTIONS);
           return res.json({
             requiresMfa: true,
             tempToken,
@@ -126,7 +128,7 @@ router.post('/callback', async (req, res) => {
         const token = jwt.sign(
           { id: dbUser.id, name: dbUser.username, email: dbUser.email, role: dbUser.role, type: 'sso' }, 
           settings.JWT_SECRET, 
-          { expiresIn: '8h' }
+          ACCESS_JWT_OPTIONS
         );
         res.json({
           access_token: token,
@@ -195,7 +197,7 @@ router.post('/local-login', async (req, res) => {
 
       if (mustUseMfa) {
         // Return temp token for MFA verification step
-        const tempToken = jwt.sign({ id: user.id, mfaPending: true }, settings.JWT_SECRET, { expiresIn: '5m' });
+        const tempToken = jwt.sign({ id: user.id, mfaPending: true }, settings.JWT_SECRET, TEMP_JWT_OPTIONS);
         return res.json({ 
           requiresMfa: true, 
           tempToken, 
@@ -207,7 +209,7 @@ router.post('/local-login', async (req, res) => {
       const token = jwt.sign(
         { id: user.id, name: user.username, email: user.email, role: user.role, type: 'local' }, 
         settings.JWT_SECRET, 
-        { expiresIn: '8h' }
+        ACCESS_JWT_OPTIONS
       );
       res.json({ access_token: token, user: { name: user.username, role: user.role } });
     });
@@ -223,7 +225,7 @@ router.post('/setup-mfa', async (req, res) => {
 
   try {
     const settings = await getSettings(req.db);
-    const decoded = jwt.verify(tempToken, settings.JWT_SECRET);
+    const decoded = jwt.verify(tempToken, settings.JWT_SECRET, { algorithms: ['HS256'] });
     if (!decoded.mfaPending) return res.status(400).json({ error: 'Invalid token' });
 
     req.db.get('SELECT id, username FROM users WHERE id = ?', [decoded.id], async (err, user) => {
@@ -254,7 +256,7 @@ router.post('/verify-mfa', async (req, res) => {
 
   try {
     const settings = await getSettings(req.db);
-    const decoded = jwt.verify(tempToken, settings.JWT_SECRET);
+    const decoded = jwt.verify(tempToken, settings.JWT_SECRET, { algorithms: ['HS256'] });
     if (!decoded.mfaPending) return res.status(400).json({ error: 'Invalid token' });
 
     req.db.get('SELECT * FROM users WHERE id = ?', [decoded.id], (err, user) => {
@@ -273,7 +275,7 @@ router.post('/verify-mfa', async (req, res) => {
       const token = jwt.sign(
         { id: user.id, name: user.username, email: user.email, role: user.role, type: 'local' }, 
         settings.JWT_SECRET, 
-        { expiresIn: '8h' }
+        ACCESS_JWT_OPTIONS
       );
       res.json({ access_token: token, user: { name: user.username, role: user.role } });
     });

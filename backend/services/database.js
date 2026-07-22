@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const settingsStore = require('./settingsStore');
 
 const DEFAULT_SETTINGS = [
@@ -7,7 +8,7 @@ const DEFAULT_SETTINGS = [
   ['OIDC_CLIENT_ID', process.env.OIDC_CLIENT_ID || ''],
   ['OIDC_CLIENT_SECRET', process.env.OIDC_CLIENT_SECRET || ''],
   ['FRONTEND_URL', process.env.FRONTEND_URL || 'http://localhost:3000'],
-  ['JWT_SECRET', process.env.JWT_SECRET || 'super_secret_threatdock_jwt_key_12345'],
+  ['JWT_SECRET', process.env.JWT_SECRET || crypto.randomBytes(48).toString('hex')],
   ['SSO_ENABLED', process.env.OIDC_ISSUER_URL ? 'true' : 'false'],
   ['MFA_REQUIRED', 'false'],
   ['ANALYST_MFA_REQUIRED', 'false'],
