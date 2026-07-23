@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: Hendrawan
+    given-names: Wahid
+title: "ThreatDock"
+version: "1.2.0"
+date-released: "2026-07-23"
+url: "https://github.com/wahidhendrawan/ThreatDock"
+license: GPL-3.0
