@@ -37,7 +37,13 @@ jobs:
           EOF
       - name: Run Jest unit tests
         working-directory: backend
-        run: npx jest --forceExit --no-cache --passWithNoTests 2>&1
+        run: npx jest --forceExit --no-cache --passWithNoTests --coverage --coverageReporters=json-summary --coverageReporters=lcov 2>&1
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./backend/coverage/lcov.info
+          flags: unittests
+          fail_ci_if_error: false
       - name: Manual intelligence service test
         working-directory: backend
         run: |
