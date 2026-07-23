@@ -10,7 +10,7 @@
     "test": "jest --forceExit --detectOpenHandles"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "^30.4.2"
   },
   "dependencies": {
     "axios": "^1.4.0",
