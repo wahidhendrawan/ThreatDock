@@ -39,7 +39,7 @@ jobs:
         working-directory: backend
         run: npx jest --forceExit --no-cache --passWithNoTests --coverage --coverageReporters=json-summary --coverageReporters=lcov 2>&1
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: ./backend/coverage/lcov.info
           flags: unittests
