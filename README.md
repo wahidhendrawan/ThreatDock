@@ -13,6 +13,19 @@ ThreatDock is a professional-grade security alert aggregator and threat intellig
 
 ---
 
+## 📸 Screenshot Gallery
+
+| Dashboard | Description |
+|---|---|
+| **Main Dashboard** | Real-time KPI metrics (total alerts, critical incidents, assets monitored), severity distribution chart, alert timeline with filtering, and active case queue |
+| **IntelOperations** | Live source-health pulse with animated indicators, manual fetch controls, ingestion history log, and IOC registry with export controls |
+| **Asset Management** | Full inventory with CVE mapping, vendor risk scoring, indicator correlation, and per-asset threat details |
+| **Alert Details** | Deep-dive view with severity badge, MITRE ATT&CK distribution, cross-source correlation graph, case ownership, SLA tracking, and audit trail |
+| **Settings** | UI-driven API key management (25+ integrations) with active validation badges, notification webhook config (Slack, Teams, Telegram, n8n), and threshold customization |
+| **Correlations** | Visual relationship mapping between alerts, indicators, assets, and vendors — unified threat context in one view |
+
+---
+
 ## ℹ️ About
 
 ThreatDock is designed to centralize and automate the workflow of Security Operations Centers (SOC) and threat hunters. By aggregating external attack surface management (EASM) data, digital risk protection (DRP), and threat intelligence (TI) into a single pane of glass, ThreatDock drastically reduces the mean time to detect (MTTD) and mean time to respond (MTTR) to emerging threats and active exposures.
@@ -109,19 +122,69 @@ PostgreSQL data is persisted on the host at `./data/postgres`. To override the d
 
 ---
 
+## 🔔 Alert Notifications
+
+ThreatDock supports multi-channel alert notifications with per-channel configuration and customizable severity thresholds (`NOTIFY_THRESHOLD`):
+
+| Channel | Config | Severity Filter |
+|---|---|---|
+| **Slack** | `SLACK_WEBHOOK_URL` | `NOTIFY_THRESHOLD` (High, Medium, Low) |
+| **Microsoft Teams** | `TEAMS_WEBHOOK_URL` | `NOTIFY_THRESHOLD` |
+| **Telegram** | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | `NOTIFY_THRESHOLD` |
+| **n8n / Custom Webhook** | `N8N_WEBHOOK_URL` | `NOTIFY_THRESHOLD` |
+
+Example notification rule config:
+
+```json
+// Sent via NOTIFICATION_RULES env var
+[
+  {
+    "channel": "slack",
+    "trigger": "cvssScore >= 7.0 || kev === true",
+    "template": "Critical CVE {{cve_id}}: {{description[:200]}}"
+  },
+  {
+    "channel": "telegram",
+    "trigger": "epssScore > 0.1",
+    "template": "High EPSS: {{cve_id}} ({{epssScore}})"
+  }
+]
+```
+
+All channels are dispatched concurrently via `Promise.allSettled` — one channel failure does not block others.
+
+---
+
 ## 📊 Supported Integrations
-| Source | Type | Description |
-| :--- | :--- | :--- |
-| **AlienVault OTX** | IOC / Pulses | Subscription-based threat pulses. |
-| **ThreatFox** | IOCs | Real-time malware indicators. |
-| **MISP** | Threat Intel | Community-driven threat sharing. |
-| **NVD / GitHub** | CVEs | Vulnerability data and security advisories. |
-| **Red Hat Security** | CVEs | Red Hat product vulnerability data. |
-| **CISA KEV / FIRST EPSS** | Exploit Prioritization | Known exploited vulnerability and exploit-probability enrichment. |
-| **BreachDirectory (RapidAPI)** | Credential Exposure | Credential breach lookup for Digital Risk workflows. |
-| **IntelOwl** | Analysis | Comprehensive malware & file analysis. |
-| **URLScan.io** | Brand Exposure | Domain and brand monitoring. |
-| **RSS Feeds** | News | Customizable RSS intelligence feeds. |
+| Source | Type | Description | Config |
+| :--- | :--- | :--- | :--- |
+| **AlienVault OTX** | IOC / Pulses | Subscription-based threat pulses | `OTX_API_KEY` |
+| **ThreatFox** | IOCs | Real-time malware indicators | `THREATFOX_AUTH_KEY` |
+| **MISP** | Threat Intel | Community-driven threat sharing. Supports any MISP-compatible instance | `MISP_URL` + `MISP_API_KEY` |
+| **NVD / GitHub** | CVEs | Vulnerability data and security advisories | `NVD_API_KEY` + `GITHUB_TOKEN` |
+| **Red Hat Security** | CVEs | Red Hat product vulnerability data | Built-in |
+| **CISA KEV / FIRST EPSS** | Exploit Prioritization | Known exploited vulnerability and exploit-probability enrichment | Built-in |
+| **BreachDirectory (RapidAPI)** | Credential Exposure | Credential breach lookup | `BREACHDIRECTORY_RAPIDAPI_KEY` |
+| **IntelOwl** | Analysis | Comprehensive malware & file analysis | `INTELO_OWL_API_KEY` |
+| **URLScan.io** | Brand Exposure | Domain and brand monitoring | `URLSCAN_API_KEY` |
+| **SecurityTrails** | Domain Intel | Passive DNS and domain intelligence | `SECURITYTRAILS_API_KEY` |
+| **IntelX** | Dark Web | Dark web intelligence and breach data | `INTELX_API_KEY` |
+| **VirusTotal** | IOC | File hash and URL reputation | `VIRUSTOTAL_API_KEY` |
+| **RSS Feeds** | News | Customizable RSS intelligence feeds | `.env` feed URLs |
+
+### MISP Integration
+
+Connect ThreatDock to any MISP instance for bidirectional intelligence sharing:
+
+```env
+MISP_URL=https://misp.internal
+MISP_API_KEY=your-misp-api-key
+```
+
+ThreatDock will:
+- Import MISP events as correlated findings
+- Enrich CVEs, IPs, and domains shared across MISP events
+- Link MISP attributes to assets and vendors in the ThreatDock inventory
 
 ---
 
