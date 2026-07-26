@@ -1,0 +1,24 @@
+name: Stale
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+permissions:
+  issues: write
+  pull-requests: write
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-issue-stale: 90
+          days-before-issue-close: 14
+          days-before-pr-stale: 45
+          days-before-pr-close: 7
+          stale-issue-label: stale
+          stale-issue-message: 'This issue has been automatically marked as stale. It will be closed in 14 days if no further activity.'
+          stale-pr-label: stale
+          stale-pr-message: 'This PR has been marked as stale. It will be closed in 7 days if no update.'
+          exempt-issue-labels: 'pinned,security,roadmap,blocked'
+          exempt-pr-labels: 'pinned,security,dependencies,blocked'
