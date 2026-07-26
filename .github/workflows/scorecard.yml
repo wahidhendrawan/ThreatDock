@@ -13,7 +13,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-      - uses: ossf/scorecard-action@v2
+      - uses: ossf/scorecard-action@v2.4.0
         with:
           results_file: results.sarif
           results_format: sarif
