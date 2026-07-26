@@ -1,0 +1,15 @@
+title = "Gitleaks config — generic secret detection"
+[allowlist]
+paths = ['''(.*__pycache__.*)''', '''(.*\.git.*)''', '''(.*node_modules.*)''', '''(.*\.venv.*)''', '''(.*tests/.*)''', '''(.*\.md)''']
+[[rules]]
+id = "generic-api-key"
+description = "Generic API key / secret"
+regex = '''(?i)(api[_-]?key|api[_-]?secret|api[_-]?token|access[_-]?key|secret[_-]?key|auth[_-]?token|bearer[\s]*=)[\s]*['"]?([A-Za-z0-9+/=]{20,}|[a-f0-9]{32,})'''
+[[rules]]
+id = "private-key"
+description = "Private key / SSH key"
+regex = '''-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'''
+[[rules]]
+id = "generic-credential"
+description = "Generic password/credential"
+regex = '''(?i)(password|passwd|pwd|db_password|db_user)[\s]*[=:]["']?[\s]*['"][A-Za-z0-9!@#$%^&*()_+]{8,}['"]'''
