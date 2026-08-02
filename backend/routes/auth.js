@@ -104,8 +104,9 @@ router.get('/login', async (req, res) => {
     const redirectUri = `${settings.FRONTEND_URL}/callback`;
     let authorizeEndpoint = `${settings.OIDC_ISSUER_URL.replace(/\/$/, '')}/authorize/`;
     try {
-      const axios = require('axios');
+      const { outboundHttp: axios } = require('../services/outboundHttp');
       const discoveryUrl = `${settings.OIDC_ISSUER_URL.replace(/\/$/, '')}/.well-known/openid-configuration`;
+
       const response = await axios.get(discoveryUrl, { timeout: 3000 });
       if (response.data && isValidIssuerUrl(response.data.authorization_endpoint)) {
         authorizeEndpoint = response.data.authorization_endpoint;

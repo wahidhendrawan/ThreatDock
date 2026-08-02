@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { outboundHttp: axios } = require('./outboundHttp');
 
 /**
  * Fetch recent Indicators of Compromise (IOCs) from ThreatFox.

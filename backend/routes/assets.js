@@ -1,7 +1,7 @@
 const express = require('express');
 const dns = require('dns').promises;
 const net = require('net');
-const axios = require('axios');
+const { outboundHttp: axios } = require('../services/outboundHttp');
 const settingsStore = require('../services/settingsStore');
 const { requireRole } = require('../services/identity');
 const { auditLog } = require('../services/audit');
