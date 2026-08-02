@@ -29,3 +29,7 @@ coverage/
 backups/
 data/backups/
 *.sql.gz
+
+# Prisma files
+backend/prisma/prisma.sqlite
+backend/services/database.js

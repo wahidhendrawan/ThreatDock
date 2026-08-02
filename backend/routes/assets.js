@@ -3,6 +3,8 @@ const dns = require('dns').promises;
 const net = require('net');
 const axios = require('axios');
 const settingsStore = require('../services/settingsStore');
+const { requireRole } = require('../services/identity');
+const { auditLog } = require('../services/audit');
 
 const COMMON_PORTS = [80, 443, 8080, 8443, 22, 25, 53, 110, 143, 993, 995, 3389];
 const DEFAULT_PUBLIC_DNS = ['1.1.1.1', '8.8.8.8'];
@@ -68,7 +70,6 @@ async function googleDnsLookup(host) {
 }
 
 async function publicLookup(host, settings) {
-  // Try Google DNS API first for reliability
   const googleResults = await googleDnsLookup(host);
   if (googleResults.length > 0) return googleResults;
 
@@ -120,21 +121,22 @@ function parseOptionalPort(value) {
   return { value: parsed, isValid: true };
 }
 
-async function findAssetByIdentity(db, domain, ip, port) {
+async function findAssetByIdentity(db, tenantId, domain, ip, port) {
   return getDb(
     db,
     `SELECT id FROM assets
-     WHERE COALESCE(domain, '') = COALESCE(?, '')
+     WHERE tenant_id = ?
+       AND COALESCE(domain, '') = COALESCE(?, '')
        AND COALESCE(ip, '') = COALESCE(?, '')
        AND COALESCE(port, -1) = COALESCE(CAST(? AS INTEGER), -1)
      ORDER BY id DESC
      LIMIT 1`,
-    [domain, ip, port]
+    [tenantId, domain, ip, port]
   );
 }
 
-async function upsertAssetByIdentity(db, identity, handlers) {
-  const existing = await findAssetByIdentity(db, identity.domain, identity.ip, identity.port);
+async function upsertAssetByIdentity(db, tenantId, identity, handlers) {
+  const existing = await findAssetByIdentity(db, tenantId, identity.domain, identity.ip, identity.port);
   if (existing && existing.id) {
     await handlers.update(existing.id);
     return { mode: 'updated', id: existing.id };
@@ -147,22 +149,24 @@ module.exports = function createAssetsRouter(db) {
   const router = express.Router();
 
   // GET /api/assets
-  router.get('/', (req, res) => {
+  router.get('/', requireRole('viewer'), (req, res) => {
+    const tenantId = req.tenant_id;
     const hasPagination = req.query.page !== undefined || req.query.limit !== undefined;
     if (hasPagination) {
       const page = Math.max(1, parseInt(req.query.page) || 1);
       const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
       const offset = (page - 1) * limit;
-      db.get('SELECT COUNT(*) as count FROM assets', [], (countErr, countRow) => {
+      db.get('SELECT COUNT(*) as count FROM assets WHERE tenant_id = ?', [tenantId], (countErr, countRow) => {
         if (countErr) return res.status(500).json({ error: countErr.message });
         const total = countRow ? countRow.count : 0;
-        db.all('SELECT * FROM assets ORDER BY created_at DESC LIMIT ? OFFSET ?', [limit, offset], (err, rows) => {
+        db.all('SELECT * FROM assets WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+          [tenantId, limit, offset], (err, rows) => {
           if (err) return res.status(500).json({ error: err.message });
           res.json({ data: rows, total, page, limit });
         });
       });
     } else {
-      db.all('SELECT * FROM assets ORDER BY created_at DESC', [], (err, rows) => {
+      db.all('SELECT * FROM assets WHERE tenant_id = ? ORDER BY created_at DESC', [tenantId], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
       });
@@ -170,7 +174,8 @@ module.exports = function createAssetsRouter(db) {
   });
 
   // POST /api/assets
-  router.post('/', async (req, res) => {
+  router.post('/', requireRole('editor'), async (req, res) => {
+    const tenantId = req.tenant_id;
     const {
       domain,
       ip,
@@ -194,7 +199,7 @@ module.exports = function createAssetsRouter(db) {
     const environmentVal = normalizeText(environment) || 'Production';
     const classificationVal = normalizeText(data_classification) || 'Internal';
     const { value: portVal, isValid: isPortValid } = parseOptionalPort(port);
-    const riskVal = 0; // Default risk for manual add
+    const riskVal = 0;
 
     if (!domainVal && !ipVal) {
       return res.status(400).json({ error: 'Domain or IP address is required' });
@@ -206,6 +211,7 @@ module.exports = function createAssetsRouter(db) {
     try {
       const result = await upsertAssetByIdentity(
         db,
+        tenantId,
         { domain: domainVal, ip: ipVal, port: portVal },
         {
           update: (id) => runDb(
@@ -219,7 +225,7 @@ module.exports = function createAssetsRouter(db) {
                  environment = COALESCE(?, environment),
                  data_classification = COALESCE(?, data_classification),
                  last_seen = CURRENT_TIMESTAMP
-             WHERE id = ?`,
+             WHERE id = ? AND tenant_id = ?`,
             [
               serviceVal,
               techStackVal,
@@ -228,14 +234,16 @@ module.exports = function createAssetsRouter(db) {
               ownerVal,
               environmentVal,
               classificationVal,
-              id
+              id,
+              tenantId
             ]
           ),
           insert: () => runDb(
             db,
-            `INSERT INTO assets (domain, ip, port, service, tech_stack, notes, business_criticality, owner, environment, data_classification, risk_score)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO assets (tenant_id, domain, ip, port, service, tech_stack, notes, business_criticality, owner, environment, data_classification, risk_score)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
+              tenantId,
               domainVal,
               ipVal,
               portVal,
@@ -251,6 +259,14 @@ module.exports = function createAssetsRouter(db) {
           )
         }
       );
+
+      await auditLog(db, {
+        tenant_id: tenantId,
+        actor: req.user,
+        event_name: result.mode === 'inserted' ? 'asset_created' : 'asset_updated',
+        status: 'success',
+        metadata: { asset_id: result.id, domain: domainVal, ip: ipVal, port: portVal }
+      });
 
       res.status(201).json({ id: result.id || result.mode, success: true });
     } catch (err) {
@@ -268,7 +284,8 @@ module.exports = function createAssetsRouter(db) {
   }
 
   // POST /api/assets/scan
-  router.post('/scan', async (req, res) => {
+  router.post('/scan', requireRole('editor'), async (req, res) => {
+    const tenantId = req.tenant_id;
     const { target: rawTarget, ports } = req.body;
     const target = typeof rawTarget === 'string' ? rawTarget : '';
     const cleanTarget = target.trim().replace(/^https?:\/\//, '').split('/')[0];
@@ -313,6 +330,7 @@ module.exports = function createAssetsRouter(db) {
         try {
           await upsertAssetByIdentity(
             db,
+            tenantId,
             { domain: cleanTarget, ip: uniqueIps[0] || null, port },
             {
               update: (id) => runDb(
@@ -323,14 +341,14 @@ module.exports = function createAssetsRouter(db) {
                      risk_score = ?,
                      last_seen = CURRENT_TIMESTAMP,
                      notes = ?
-                 WHERE id = ?`,
-                [service, risk, 'Discovered by ThreatDock asset scan', id]
+                 WHERE id = ? AND tenant_id = ?`,
+                [service, risk, 'Discovered by ThreatDock asset scan', id, tenantId]
               ),
               insert: () => runDb(
                 db,
-                `INSERT INTO assets (domain, ip, port, service, status, risk_score, last_seen, notes)
-                 VALUES (?, ?, ?, ?, 'Active', ?, CURRENT_TIMESTAMP, ?)`,
-                [cleanTarget, uniqueIps[0] || null, port, service, risk, 'Discovered by ThreatDock asset scan']
+                `INSERT INTO assets (tenant_id, domain, ip, port, service, status, risk_score, last_seen, notes)
+                 VALUES (?, ?, ?, ?, ?, 'Active', ?, CURRENT_TIMESTAMP, ?)`,
+                [tenantId, cleanTarget, uniqueIps[0] || null, port, service, risk, 'Discovered by ThreatDock asset scan']
               )
             }
           );
@@ -425,6 +443,7 @@ module.exports = function createAssetsRouter(db) {
         try {
           await upsertAssetByIdentity(
             db,
+            tenantId,
             { domain: host, ip: hostIp, port: null },
             {
               update: (id) => runDb(
@@ -435,14 +454,14 @@ module.exports = function createAssetsRouter(db) {
                      risk_score = 20,
                      last_seen = CURRENT_TIMESTAMP,
                      notes = ?
-                 WHERE id = ?`,
-                [`Discovered while scanning ${cleanTarget}`, id]
+                 WHERE id = ? AND tenant_id = ?`,
+                [`Discovered while scanning ${cleanTarget}`, id, tenantId]
               ),
               insert: () => runDb(
                 db,
-                `INSERT INTO assets (domain, ip, service, status, risk_score, last_seen, notes)
-                 VALUES (?, ?, 'Discovered Subdomain', 'Active', 20, CURRENT_TIMESTAMP, ?)`,
-                [host, hostIp, `Discovered while scanning ${cleanTarget}`]
+                `INSERT INTO assets (tenant_id, domain, ip, service, status, risk_score, last_seen, notes)
+                 VALUES (?, ?, ?, 'Discovered Subdomain', 'Active', 20, CURRENT_TIMESTAMP, ?)`,
+                [tenantId, host, hostIp, `Discovered while scanning ${cleanTarget}`]
               )
             }
           );
@@ -450,6 +469,14 @@ module.exports = function createAssetsRouter(db) {
           console.error('Subdomain save failed:', saveErr.message);
         }
       }
+
+      await auditLog(db, {
+        tenant_id: tenantId,
+        actor: req.user,
+        event_name: 'asset_scan',
+        status: 'success',
+        metadata: { target: cleanTarget, resolved_ips: uniqueIps.length, open_ports: openPorts, discovered: discoveredHosts.size }
+      });
 
       res.json({
         target: cleanTarget,
@@ -470,7 +497,8 @@ module.exports = function createAssetsRouter(db) {
   });
 
   // PATCH /api/assets/:id
-  router.patch('/:id', (req, res) => {
+  router.patch('/:id', requireRole('editor'), (req, res) => {
+    const tenantId = req.tenant_id;
     const { status, risk_score, notes, business_criticality, owner, environment, data_classification } = req.body;
     const updates = [];
     const params = [];
@@ -481,20 +509,36 @@ module.exports = function createAssetsRouter(db) {
     if (owner !== undefined) { updates.push('owner = ?'); params.push(owner); }
     if (environment !== undefined) { updates.push('environment = ?'); params.push(environment); }
     if (data_classification !== undefined) { updates.push('data_classification = ?'); params.push(data_classification); }
-    
+
     if (updates.length === 0) return res.json({ success: true });
-    
+
     params.push(req.params.id);
-    db.run(`UPDATE assets SET ${updates.join(', ')} WHERE id = ?`, params, function(err) {
+    params.push(tenantId);
+    db.run(`UPDATE assets SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`, params, function(err) {
       if (err) return res.status(500).json({ error: err.message });
+      auditLog(db, {
+        tenant_id: tenantId,
+        actor: req.user,
+        event_name: 'asset_updated',
+        status: 'success',
+        metadata: { asset_id: req.params.id, fields: Object.keys(req.body || {}) }
+      }).catch(() => {});
       res.json({ updated: this.changes });
     });
   });
 
   // DELETE /api/assets/:id
-  router.delete('/:id', (req, res) => {
-    db.run('DELETE FROM assets WHERE id = ?', [req.params.id], function(err) {
+  router.delete('/:id', requireRole('admin'), (req, res) => {
+    const tenantId = req.tenant_id;
+    db.run('DELETE FROM assets WHERE id = ? AND tenant_id = ?', [req.params.id, tenantId], function(err) {
       if (err) return res.status(500).json({ error: err.message });
+      auditLog(db, {
+        tenant_id: tenantId,
+        actor: req.user,
+        event_name: 'asset_deleted',
+        status: 'success',
+        metadata: { asset_id: req.params.id }
+      }).catch(() => {});
       res.json({ deleted: this.changes, success: true });
     });
   });

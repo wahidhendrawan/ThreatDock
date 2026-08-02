@@ -53,9 +53,39 @@ app.use((req, res, next) => {
   next();
 });
 app.use(cors());
-app.use(express.json());
+
+// P0-3: JSON body size limit (defense against oversized payloads).
+// Applies to all API requests. Individual routes may still layer stricter limits.
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '10mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+// P0-3: Reject non-JSON content on JSON-only endpoints and cap URL-encoded payloads.
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+
+// P0-3: Per-request timeout guard so that a slow client/large upstream cannot pin a socket.
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '30000', 10);
+app.use((req, res, next) => {
+  req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    if (!res.headersSent) {
+      res.status(504).json({ error: 'Request timed out' });
+    }
+    req.destroy();
+  });
+  next();
+});
 
 app.disable('x-powered-by');
+
+// P0-3: Map body-parser failures to clear client errors instead of generic 500s.
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request payload exceeds the configured size limit.' });
+  }
+  if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+    return res.status(400).json({ error: 'Malformed request body.' });
+  }
+  return next(err);
+});
 
 // Trust proxy for correct IP detection behind nginx
 app.set('trust proxy', 1);
@@ -212,7 +242,13 @@ async function fetchSourceWithHealth(source, fetcher) {
   return [];
 }
 
-async function persistAlerts(alerts) {
+async function getDefaultTenant() {
+  const result = await db.query("SELECT id FROM tenants WHERE slug = 'default'");
+  if (result.rows.length === 0) throw new Error('Default tenant not found');
+  return result.rows[0].id;
+}
+
+async function persistAlerts(alerts, tenantId) {
   if (alerts.length === 0) return;
   // Deduplicate by (source, externalId) to avoid ON CONFLICT errors in batch
   const seen = new Set();
@@ -230,9 +266,10 @@ async function persistAlerts(alerts) {
     const params = [];
     let idx = 0;
     for (const alert of batch) {
-      const n = idx * 8;
-      values.push(`($${n+1},$${n+2},$${n+3},$${n+4},$${n+5},$${n+6},$${n+7},$${n+8})`);
+      const n = idx * 9;
+      values.push(`($${n+1},$${n+2},$${n+3},$${n+4},$${n+5},$${n+6},$${n+7},$${n+8},$${n+9})`);
       params.push(
+        tenantId,
         alert.source,
         alert.externalId,
         alert.title,
@@ -245,7 +282,7 @@ async function persistAlerts(alerts) {
       idx++;
     }
     await db.query(`
-      INSERT INTO alerts (source, "externalId", title, severity, date, url, status, attack_phase)
+      INSERT INTO alerts (tenant_id, source, "externalId", title, severity, date, url, status, attack_phase)
       VALUES ${values.join(', ')}
       ON CONFLICT(source, "externalId") DO UPDATE SET
         title = excluded.title,
@@ -280,6 +317,9 @@ async function fetchAllSources() {
   fetchStartedAt = Date.now();
   try {
     await applyRuntimeSettings();
+
+    // Get default tenant for background writes
+    const defaultTenantId = await getDefaultTenant();
 
     const JOB_TIMEOUT = 60000; // 60s per source max
     const withTimeout = (name, fn) =>
@@ -482,7 +522,7 @@ async function fetchAllSources() {
     }
 
     // Persist alerts to DB using upsert to avoid overwriting user updates (status, attack_phase)
-    await persistAlerts(alerts);
+    await persistAlerts(alerts, defaultTenantId);
     io.emit('alerts:updated', { count: alerts.length });
 
     console.log(`Fetched and stored ${alerts.length} alerts.`);
@@ -500,8 +540,8 @@ async function fetchAllSources() {
       if (Array.isArray(monitoredBrands) && monitoredBrands.length > 0) {
         console.log(`Starting automated brand monitoring for: ${monitoredBrands.join(', ')}`);
         await Promise.all(monitoredBrands.map(async (brand) => {
-          const brandResults = await osintService.searchBrandExposure(db, brand);
-          osintService.saveFindings(db, 'brand-exposure', brand, brandResults);
+          const brandResults = await osintService.searchBrandExposure(db, brand, defaultTenantId);
+          osintService.saveFindings(db, defaultTenantId, 'brand-exposure', brand, brandResults);
         }));
       }
     } catch (brandErr) {
@@ -586,7 +626,7 @@ app.get('/api/docs', (req, res) => {
 });
 
 // Push notification endpoint (broadcasts to all WebSocket clients)
-app.post('/api/notify', express.json(), (req, res) => {
+app.post('/api/notify', (req, res) => {
   const { title, body, severity } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Title is required' });
   io.emit('push:notification', { title, body, severity: severity || 'info', timestamp: new Date().toISOString() });
