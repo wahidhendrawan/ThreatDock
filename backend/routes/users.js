@@ -1,186 +1,178 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const { generateSecret, generateURI, verifySync } = require('otplib');
+const qrcode = require('qrcode');
+const { requireRole, normalizeRole, normalizeRoles } = require('../services/identity');
+const { auditLog } = require('../services/audit');
 
-module.exports = function(db) {
+const dbGet = (db, sql, params = []) => new Promise((resolve, reject) => {
+  db.get(sql, params, (err, row) => err ? reject(err) : resolve(row || null));
+});
+const dbRun = (db, sql, params = []) => new Promise((resolve, reject) => {
+  db.run(sql, params, function onRun(err) {
+    if (err) return reject(err);
+    resolve({ lastID: this.lastID, changes: this.changes });
+  });
+});
+
+const verifyMfaCode = (code, secret) => {
+  if (!/^\d{6}$/.test(String(code || ''))) return false;
+  const result = verifySync({ token: String(code), secret, window: 0 });
+  return Boolean(result && result.valid === true);
+};
+
+function legacyRole(role) {
+  return role === 'admin' ? 'Admin' : role === 'analyst' ? 'Analyst' : 'Viewer';
+}
+
+module.exports = function createUsersRouter(db) {
   const router = express.Router();
 
-  // Middleware to ensure user is Admin
-  const requireAdmin = (req, res, next) => {
-    if (req.user && req.user.role === 'Admin') {
-      return next();
-    }
-    return res.status(403).json({ error: 'Requires Admin role' });
-  };
-
-  // GET /api/users/list/simple (Accessible by Analysts for Assignee selection)
-  router.get('/list/simple', (req, res) => {
-    db.all('SELECT username FROM users ORDER BY username ASC', [], (err, rows) => {
+  router.get('/list/simple', requireRole('viewer'), (req, res) => {
+    db.all('SELECT username FROM users WHERE tenant_id = ? ORDER BY username ASC', [req.tenant_id], (err, rows) => {
       if (err) return res.status(500).json({ error: 'Database error' });
-      res.json(rows.map(r => r.username));
+      return res.json((rows || []).map(row => row.username));
     });
   });
 
-  // GET /api/users
-  router.get('/', requireAdmin, (req, res) => {
-    db.all('SELECT id, username, email, role, mfa_enabled, created_at FROM users', [], (err, rows) => {
-      if (err) return res.status(500).json({ error: 'Database error' });
-      res.json(rows);
-    });
-  });
-
-  // POST /api/users
-  router.post('/', requireAdmin, (req, res) => {
-    const { username, password, email, role } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password required' });
-    }
-    
-    const hash = bcrypt.hashSync(password, 10);
-    const userRole = role || 'Analyst';
-    
-    db.run(
-      'INSERT INTO users (username, password_hash, email, role) VALUES (?, ?, ?, ?)',
-      [username, hash, email, userRole],
-      function(err) {
-        if (err) {
-          if (err.message.includes('UNIQUE')) {
-            return res.status(400).json({ error: 'Username already exists' });
-          }
-          return res.status(500).json({ error: 'Database error' });
-        }
-        res.json({ id: this.lastID, username, email, role: userRole });
-      }
+  router.get('/', requireRole('admin'), (req, res) => {
+    db.all(
+      `SELECT id, username, email, role, roles, auth_provider, mfa_enabled, created_at
+       FROM users WHERE tenant_id = ? ORDER BY username`,
+      [req.tenant_id],
+      (err, rows) => err ? res.status(500).json({ error: 'Database error' }) : res.json(rows || [])
     );
   });
 
-  // PATCH /api/users/:id (From feature branch: Update full user details)
-  router.patch('/:id', requireAdmin, (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    const { username: rawUsername, email, role } = req.body;
-    const username = typeof rawUsername === 'string' ? rawUsername : '';
-
-    if (username.trim() === '') return res.status(400).json({ error: 'Username is required' });
-    if (!['Admin', 'Analyst'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
-
-    db.get('SELECT id FROM users WHERE id = ?', [id], (findErr, user) => {
-      if (findErr) return res.status(500).json({ error: 'Database error' });
-      if (!user) return res.status(404).json({ error: 'User not found' });
-
-      db.run(
-        'UPDATE users SET username = ?, email = ?, role = ? WHERE id = ?',
-        [username.trim(), email || null, role, id],
-        function(updateErr) {
-          if (updateErr) {
-            if (updateErr.message.includes('UNIQUE')) return res.status(400).json({ error: 'Username already exists' });
-            return res.status(500).json({ error: 'Database error' });
-          }
-          res.json({ success: true, id, username: username.trim(), email: email || null, role });
-        }
+  router.post('/', requireRole('admin'), async (req, res) => {
+    const { username, password, email } = req.body || {};
+    const canonicalRole = normalizeRole(req.body && req.body.role) || normalizeRoles(req.body && req.body.roles)[0] || 'viewer';
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    try {
+      const hash = bcrypt.hashSync(password, 10);
+      const roles = JSON.stringify([canonicalRole]);
+      const result = await dbRun(
+        db,
+        `INSERT INTO users (tenant_id, username, password_hash, email, role, roles, auth_provider)
+         VALUES (?, ?, ?, ?, ?, ?, 'local')`,
+        [req.tenant_id, String(username).trim(), hash, email || null, legacyRole(canonicalRole), roles]
       );
-    });
-  });
-
-  // PATCH /api/users/:id/role (From main branch: Update role only)
-  router.patch('/:id/role', requireAdmin, (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    const { role } = req.body;
-
-    if (!['Admin', 'Analyst'].includes(role)) {
-      return res.status(400).json({ error: 'Invalid role' });
-    }
-
-    db.get('SELECT id FROM users WHERE id = ?', [id], (findErr, user) => {
-      if (findErr) return res.status(500).json({ error: 'Database error' });
-      if (!user) return res.status(404).json({ error: 'User not found' });
-
-      db.run('UPDATE users SET role = ? WHERE id = ?', [role, id], function(updateErr) {
-        if (updateErr) return res.status(500).json({ error: 'Database error' });
-        res.json({ success: true, id, role });
+      await auditLog(db, {
+        tenant_id: req.tenant_id,
+        actor: req.user,
+        event_name: 'user_created',
+        status: 'success',
+        metadata: { target_user_id: result.lastID, username, roles: [canonicalRole] }
       });
-    });
-  });
-
-  // DELETE /api/users/:id
-  router.delete('/:id', requireAdmin, (req, res) => {
-    const id = req.params.id;
-    db.run('DELETE FROM users WHERE id = ?', [id], function(err) {
-      if (err) return res.status(500).json({ error: 'Database error' });
-      res.json({ success: true, deleted: this.changes });
-    });
-  });
-
-  const { generateSecret, generateURI, verifySync } = require('otplib');
-  const qrcode = require('qrcode');
-
-  const verifyMfaCode = (code, secret) => {
-    if (!/^\d{6}$/.test(String(code || ''))) return false;
-    const result = verifySync({
-      token: String(code),
-      secret,
-      window: 0
-    });
-    return Boolean(result && result.valid === true);
-  };
-
-  // POST /api/users/:id/mfa/setup
-  router.post('/:id/mfa/setup', async (req, res) => {
-    if (req.user.id !== parseInt(req.params.id) && req.user.role !== 'Admin') {
-      return res.status(403).json({ error: 'Unauthorized' });
+      return res.status(201).json({ id: result.lastID, username, email: email || null, role: legacyRole(canonicalRole), roles: [canonicalRole] });
+    } catch (err) {
+      if (String(err.message).includes('UNIQUE')) return res.status(400).json({ error: 'Username already exists' });
+      return res.status(500).json({ error: 'Database error' });
     }
+  });
 
-    db.get('SELECT username, email FROM users WHERE id = ?', [req.params.id], async (err, user) => {
-      if (err || !user) return res.status(404).json({ error: 'User not found' });
+  router.patch('/:id', requireRole('admin'), async (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    const canonicalRole = normalizeRole(req.body.role) || normalizeRoles(req.body.roles)[0];
+    if (!username) return res.status(400).json({ error: 'Username is required' });
+    if (!canonicalRole) return res.status(400).json({ error: 'Invalid role' });
+    try {
+      const before = await dbGet(db, 'SELECT id, username, email, role, roles FROM users WHERE id = ? AND tenant_id = ?', [id, req.tenant_id]);
+      if (!before) return res.status(404).json({ error: 'User not found' });
+      await dbRun(
+        db,
+        'UPDATE users SET username = ?, email = ?, role = ?, roles = ? WHERE id = ? AND tenant_id = ?',
+        [username, req.body.email || null, legacyRole(canonicalRole), JSON.stringify([canonicalRole]), id, req.tenant_id]
+      );
+      await auditLog(db, {
+        tenant_id: req.tenant_id,
+        actor: req.user,
+        event_name: 'user_updated',
+        status: 'success',
+        metadata: { target_user_id: id, before, after: { username, email: req.body.email || null, roles: [canonicalRole] } }
+      });
+      return res.json({ success: true, id, username, email: req.body.email || null, role: legacyRole(canonicalRole), roles: [canonicalRole] });
+    } catch (err) {
+      if (String(err.message).includes('UNIQUE')) return res.status(400).json({ error: 'Username already exists' });
+      return res.status(500).json({ error: 'Database error' });
+    }
+  });
 
+  router.patch('/:id/role', requireRole('admin'), async (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    const canonicalRole = normalizeRole(req.body && req.body.role) || normalizeRoles(req.body && req.body.roles)[0];
+    if (!canonicalRole) return res.status(400).json({ error: 'Invalid role' });
+    try {
+      const user = await dbGet(db, 'SELECT id, role, roles FROM users WHERE id = ? AND tenant_id = ?', [id, req.tenant_id]);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      await dbRun(db, 'UPDATE users SET role = ?, roles = ? WHERE id = ? AND tenant_id = ?', [legacyRole(canonicalRole), JSON.stringify([canonicalRole]), id, req.tenant_id]);
+      await auditLog(db, { tenant_id: req.tenant_id, actor: req.user, event_name: 'user_roles_updated', status: 'success', metadata: { target_user_id: id, roles: [canonicalRole] } });
+      return res.json({ success: true, id, role: legacyRole(canonicalRole), roles: [canonicalRole] });
+    } catch {
+      return res.status(500).json({ error: 'Database error' });
+    }
+  });
+
+  router.delete('/:id', requireRole('admin'), async (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete your own account' });
+    try {
+      const result = await dbRun(db, 'DELETE FROM users WHERE id = ? AND tenant_id = ?', [id, req.tenant_id]);
+      if (!result.changes) return res.status(404).json({ error: 'User not found' });
+      await auditLog(db, { tenant_id: req.tenant_id, actor: req.user, event_name: 'user_deleted', status: 'success', metadata: { target_user_id: id } });
+      return res.json({ success: true, deleted: result.changes });
+    } catch {
+      return res.status(500).json({ error: 'Database error' });
+    }
+  });
+
+  router.post('/:id/mfa/setup', requireRole('viewer'), async (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    const isAdmin = normalizeRoles(req.user.roles).includes('admin');
+    if (req.user.id !== id && !isAdmin) return res.status(403).json({ error: 'Unauthorized' });
+    try {
+      const user = await dbGet(db, 'SELECT id, username FROM users WHERE id = ? AND tenant_id = ?', [id, req.tenant_id]);
+      if (!user) return res.status(404).json({ error: 'User not found' });
       const secret = generateSecret();
-      const otpauth = generateURI({ accountName: user.username, issuer: 'ThreatDock', secret });
-      
-      try {
-        const qrCodeUrl = await qrcode.toDataURL(otpauth);
-        
-        db.run('UPDATE users SET mfa_secret = ? WHERE id = ?', [secret, req.params.id], function(updateErr) {
-          if (updateErr) return res.status(500).json({ error: 'Failed to save MFA secret' });
-          res.json({ secret, qrCodeUrl });
-        });
-      } catch (qrErr) {
-        res.status(500).json({ error: 'Failed to generate QR code' });
-      }
-    });
-  });
-
-  // POST /api/users/:id/mfa/enable
-  router.post('/:id/mfa/enable', (req, res) => {
-    if (req.user.id !== parseInt(req.params.id) && req.user.role !== 'Admin') {
-      return res.status(403).json({ error: 'Unauthorized' });
+      const qrCodeUrl = await qrcode.toDataURL(generateURI({ accountName: user.username, issuer: 'ThreatDock', secret }));
+      await dbRun(db, 'UPDATE users SET mfa_secret = ?, mfa_enabled = 0 WHERE id = ? AND tenant_id = ?', [secret, id, req.tenant_id]);
+      await auditLog(db, { tenant_id: req.tenant_id, actor: req.user, event_name: 'mfa_setup', status: 'success', metadata: { target_user_id: id } });
+      return res.json({ secret, qrCodeUrl });
+    } catch {
+      return res.status(500).json({ error: 'Failed to configure MFA' });
     }
-
-    const { code } = req.body;
-    db.get('SELECT mfa_secret FROM users WHERE id = ?', [req.params.id], (err, user) => {
-      if (err || !user || !user.mfa_secret) return res.status(400).json({ error: 'MFA not configured' });
-
-      const isValid = verifyMfaCode(code, user.mfa_secret);
-      if (isValid) {
-        db.run('UPDATE users SET mfa_enabled = 1 WHERE id = ?', [req.params.id], (updateErr) => {
-          if (updateErr) return res.status(500).json({ error: 'Database error' });
-          res.json({ success: true, message: 'MFA successfully enabled' });
-        });
-      } else {
-        res.status(400).json({ error: 'Invalid verification code' });
-      }
-    });
   });
 
-  // DELETE /api/users/:id/mfa
-  router.delete('/:id/mfa', requireAdmin, (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    db.get('SELECT id FROM users WHERE id = ?', [id], (findErr, user) => {
-      if (findErr) return res.status(500).json({ error: 'Database error' });
-      if (!user) return res.status(404).json({ error: 'User not found' });
+  router.post('/:id/mfa/enable', requireRole('viewer'), async (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    const isAdmin = normalizeRoles(req.user.roles).includes('admin');
+    if (req.user.id !== id && !isAdmin) return res.status(403).json({ error: 'Unauthorized' });
+    try {
+      const user = await dbGet(db, 'SELECT id, mfa_secret FROM users WHERE id = ? AND tenant_id = ?', [id, req.tenant_id]);
+      if (!user || !user.mfa_secret) return res.status(400).json({ error: 'MFA not configured' });
+      if (!verifyMfaCode(req.body && req.body.code, user.mfa_secret)) {
+        await auditLog(db, { tenant_id: req.tenant_id, actor: req.user, event_name: 'mfa_enable', status: 'failure', metadata: { target_user_id: id } });
+        return res.status(400).json({ error: 'Invalid verification code' });
+      }
+      await dbRun(db, 'UPDATE users SET mfa_enabled = 1 WHERE id = ? AND tenant_id = ?', [id, req.tenant_id]);
+      await auditLog(db, { tenant_id: req.tenant_id, actor: req.user, event_name: 'mfa_enable', status: 'success', metadata: { target_user_id: id } });
+      return res.json({ success: true, message: 'MFA successfully enabled' });
+    } catch {
+      return res.status(500).json({ error: 'Database error' });
+    }
+  });
 
-      db.run('UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE id = ?', [id], function(updateErr) {
-        if (updateErr) return res.status(500).json({ error: 'Database error' });
-        res.json({ success: true, id, mfa_enabled: 0 });
-      });
-    });
+  router.delete('/:id/mfa', requireRole('admin'), async (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    try {
+      const result = await dbRun(db, 'UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE id = ? AND tenant_id = ?', [id, req.tenant_id]);
+      if (!result.changes) return res.status(404).json({ error: 'User not found' });
+      await auditLog(db, { tenant_id: req.tenant_id, actor: req.user, event_name: 'mfa_disabled', status: 'success', metadata: { target_user_id: id } });
+      return res.json({ success: true, id, mfa_enabled: 0 });
+    } catch {
+      return res.status(500).json({ error: 'Database error' });
+    }
   });
 
   return router;

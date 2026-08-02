@@ -1,6 +1,8 @@
 const express = require('express');
 const intelligenceService = require('../services/intelligence');
 const settingsStore = require('../services/settingsStore');
+const { requireRole } = require('../services/identity');
+const { auditLog } = require('../services/audit');
 
 function getSettings(db) {
   return settingsStore.getSettings(db);
@@ -31,7 +33,9 @@ module.exports = function createIntelligenceRouter(db) {
   let correlationJob = null;
   let cveRefreshJob = null;
 
-  router.get('/stats', (req, res) => {
+  // Indicators, correlations, and CVE enrichment are shared intelligence.
+  // Tenant-owned alert lookups inside this router are always tenant scoped.
+  router.get('/stats', requireRole('viewer'), (req, res) => {
     const stats = {};
     db.get('SELECT COUNT(*) as count FROM indicators', [], (err, row) => {
       if (!err) stats.indicators = row.count;
@@ -42,11 +46,11 @@ module.exports = function createIntelligenceRouter(db) {
     });
   });
 
-  router.get('/indicators', (req, res) => {
+  router.get('/indicators', requireRole('viewer'), (req, res) => {
     const { type, source, search, page: rawPage, limit: rawLimit } = req.query;
     const hasPagination = rawPage !== undefined || rawLimit !== undefined;
-    const page = Math.max(1, parseInt(rawPage) || 1);
-    const limit = Math.min(1000, Math.max(1, parseInt(rawLimit) || 500));
+    const page = Math.max(1, parseInt(rawPage, 10) || 1);
+    const limit = Math.min(1000, Math.max(1, parseInt(rawLimit, 10) || 500));
     const offset = (page - 1) * limit;
     const conditions = [];
     const params = [];
@@ -68,22 +72,20 @@ module.exports = function createIntelligenceRouter(db) {
       db.get(`SELECT COUNT(*) as count FROM indicators${whereClause}`, params, (countErr, countRow) => {
         if (countErr) return res.status(500).json({ error: countErr.message });
         const total = countRow ? countRow.count : 0;
-        const paginatedParams = [...params, limit, offset];
-        db.all(`${baseQuery} ORDER BY updated_at DESC LIMIT ? OFFSET ?`, paginatedParams, (err, rows) => {
+        db.all(`${baseQuery} ORDER BY updated_at DESC LIMIT ? OFFSET ?`, [...params, limit, offset], (err, rows) => {
           if (err) return res.status(500).json({ error: err.message });
-          res.json({ data: rows || [], total, page, limit });
+          return res.json({ data: rows || [], total, page, limit });
         });
       });
     } else {
       db.all(`${baseQuery} ORDER BY updated_at DESC LIMIT 1000`, params, (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows || []);
+        return res.json(rows || []);
       });
     }
   });
 
-  // GET /indicators/export — export IOCs in JSON, CSV, or STIX format
-  router.get('/indicators/export', (req, res) => {
+  router.get('/indicators/export', requireRole('viewer'), (req, res) => {
     const format = (req.query.format || 'json').toLowerCase();
     const { type, source, search } = req.query;
     const conditions = [];
@@ -95,26 +97,24 @@ module.exports = function createIntelligenceRouter(db) {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
-    const limit = Math.min(10000, parseInt(req.query.limit || '5000'));
+    const limit = Math.min(10000, Math.max(1, parseInt(req.query.limit || '5000', 10) || 5000));
 
     db.all(`SELECT * FROM indicators${whereClause} ORDER BY updated_at DESC LIMIT ?`, [...params, limit], (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
       const items = rows || [];
-
       if (format === 'csv') {
         const header = 'value,type,source,severity,confidence,first_seen,last_seen,malware_family,tlp';
         const lines = items.map(i =>
-          `"${(i.value||'').replace(/"/g,'""')}","${i.type||''}","${i.source||''}","${i.severity||''}",${i.confidence||''},"${i.first_seen||''}","${i.last_seen||''}","${i.malware_family||''}","${i.tlp||'TLP:AMBER'}"`
+          `"${(i.value || '').replace(/"/g, '""')}","${i.type || ''}","${i.source || ''}","${i.severity || ''}",${i.confidence || ''},"${i.first_seen || ''}","${i.last_seen || ''}","${i.malware_family || ''}","${i.tlp || 'TLP:AMBER'}"`
         );
         res.set('Content-Type', 'text/csv');
         res.set('Content-Disposition', 'attachment; filename="threatdock-iocs.csv"');
         return res.send([header, ...lines].join('\n'));
       }
-
       if (format === 'stix') {
         const stix = {
           type: 'bundle',
-          id: 'bundle--' + require('crypto').randomUUID(),
+          id: `bundle--${require('crypto').randomUUID()}`,
           spec_version: '2.1',
           objects: items.map(i => ({
             type: 'indicator',
@@ -123,7 +123,7 @@ module.exports = function createIntelligenceRouter(db) {
             modified: i.last_seen || new Date().toISOString(),
             name: i.value || '',
             description: `ThreatDock IOC from ${i.source || 'unknown'} (${i.type || 'unknown'})`,
-            pattern: `[${i.type || 'file:hashes'}:value = '${(i.value||'').replace(/'/g,"\\'")}']`,
+            pattern: `[${i.type || 'file:hashes'}:value = '${(i.value || '').replace(/'/g, "\\'")}']`,
             pattern_type: 'stix',
             valid_from: i.first_seen || new Date().toISOString(),
             indicator_types: ['malicious-activity'],
@@ -134,52 +134,48 @@ module.exports = function createIntelligenceRouter(db) {
         res.set('Content-Disposition', 'attachment; filename="threatdock-iocs-stix.json"');
         return res.json(stix);
       }
-
-      // Default: JSON
       res.set('Content-Disposition', 'attachment; filename="threatdock-iocs.json"');
-      res.json(items);
+      return res.json(items);
     });
   });
 
-  router.get('/correlations', (req, res) => {
+  router.get('/correlations', requireRole('viewer'), (req, res) => {
     const hasPagination = req.query.page !== undefined || req.query.limit !== undefined;
     if (hasPagination) {
-      const page = Math.max(1, parseInt(req.query.page) || 1);
-      const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit) || 500));
+      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+      const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 500));
       const offset = (page - 1) * limit;
       db.get('SELECT COUNT(*) as count FROM correlated_findings', [], (countErr, countRow) => {
         if (countErr) return res.status(500).json({ error: countErr.message });
         const total = countRow ? countRow.count : 0;
         db.all('SELECT * FROM correlated_findings ORDER BY score DESC, updated_at DESC LIMIT ? OFFSET ?', [limit, offset], (err, rows) => {
           if (err) return res.status(500).json({ error: err.message });
-          res.json({ data: rows || [], total, page, limit });
+          return res.json({ data: rows || [], total, page, limit });
         });
       });
     } else {
       db.all('SELECT * FROM correlated_findings ORDER BY score DESC, updated_at DESC LIMIT 1000', [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows || []);
+        return res.json(rows || []);
       });
     }
   });
 
-  router.post('/correlations/rebuild', async (req, res) => {
-    if (correlationJob) {
-      return res.status(202).json({ message: 'Correlation rebuild already running' });
-    }
-
+  router.post('/correlations/rebuild', requireRole('admin'), async (req, res) => {
+    if (correlationJob) return res.status(202).json({ message: 'Correlation rebuild already running' });
     correlationJob = intelligenceService.rebuildCorrelations(db)
-      .catch(err => {
-        console.error('Correlation rebuild failed:', err.message);
-      })
-      .finally(() => {
-        correlationJob = null;
-      });
-
-    res.status(202).json({ message: 'Correlation rebuild started' });
+      .catch(err => console.error('Correlation rebuild failed:', err.message))
+      .finally(() => { correlationJob = null; });
+    await auditLog(db, {
+      tenant_id: req.tenant_id,
+      actor: req.user,
+      event_name: 'correlations_rebuild_requested',
+      status: 'success'
+    });
+    return res.status(202).json({ message: 'Correlation rebuild started' });
   });
 
-  router.get('/cve-enrichment', (req, res) => {
+  router.get('/cve-enrichment', requireRole('viewer'), (req, res) => {
     const { cve } = req.query;
     const params = [];
     let query = 'SELECT * FROM cve_enrichment';
@@ -193,67 +189,70 @@ module.exports = function createIntelligenceRouter(db) {
     query += ' ORDER BY kev_known DESC, epss_score DESC LIMIT 1000';
     db.all(query, params, (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
+      return res.json(rows || []);
     });
   });
 
-  router.post('/cve-enrichment/refresh', async (req, res) => {
-    if (cveRefreshJob) {
-      return res.status(202).json({ message: 'CVE enrichment refresh already running' });
-    }
-
+  router.post('/cve-enrichment/refresh', requireRole('admin'), async (req, res) => {
+    if (cveRefreshJob) return res.status(202).json({ message: 'CVE enrichment refresh already running' });
     cveRefreshJob = Promise.resolve();
     try {
       const requested = Array.isArray(req.body.cves) ? req.body.cves : [];
       let cves = requested.map(item => String(item).toUpperCase()).filter(Boolean);
       if (cves.length === 0) {
         const alerts = await new Promise((resolve, reject) => {
-          db.all('SELECT externalId, title FROM alerts ORDER BY date DESC LIMIT 1000', [], (err, rows) => {
-            if (err) return reject(err);
-            resolve(rows || []);
-          });
+          db.all(
+            'SELECT "externalId", title FROM alerts WHERE tenant_id = ? ORDER BY date DESC LIMIT 1000',
+            [req.tenant_id],
+            (err, rows) => err ? reject(err) : resolve(rows || [])
+          );
         });
         cves = [...new Set(alerts.flatMap(alert => intelligenceService.extractCves(`${alert.externalId || ''} ${alert.title || ''}`)))];
       }
       cveRefreshJob = intelligenceService.enrichCves(db, cves)
-        .catch(err => {
-          console.error('CVE enrichment refresh failed:', err.message);
-        })
-        .finally(() => {
-          cveRefreshJob = null;
-        });
-
-      res.status(202).json({ message: 'CVE enrichment refresh started', refreshed: cves.length });
+        .catch(err => console.error('CVE enrichment refresh failed:', err.message))
+        .finally(() => { cveRefreshJob = null; });
+      await auditLog(db, {
+        tenant_id: req.tenant_id,
+        actor: req.user,
+        event_name: 'cve_enrichment_refresh_requested',
+        status: 'success',
+        metadata: { cve_count: cves.length }
+      });
+      return res.status(202).json({ message: 'CVE enrichment refresh started', refreshed: cves.length });
     } catch (err) {
       cveRefreshJob = null;
-      res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: err.message });
     }
   });
 
-  router.get('/risk-rules', async (req, res) => {
+  router.get('/risk-rules', requireRole('viewer'), async (req, res) => {
     try {
       const settings = await getSettings(db);
-      res.json({
+      return res.json({
         weights: parseJson(settings.RISK_WEIGHTS, {}),
         notificationRules: parseJson(settings.NOTIFICATION_RULES, [])
       });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to load risk rules' });
+      return res.status(500).json({ error: 'Failed to load risk rules' });
     }
   });
 
-  router.put('/risk-rules', async (req, res) => {
-    if (!req.user || req.user.role !== 'Admin') {
-      return res.status(403).json({ error: 'Requires Admin role' });
-    }
+  router.put('/risk-rules', requireRole('admin'), async (req, res) => {
     try {
       const weights = req.body.weights || {};
       const notificationRules = Array.isArray(req.body.notificationRules) ? req.body.notificationRules : [];
       await upsertSetting(db, 'RISK_WEIGHTS', JSON.stringify(weights));
       await upsertSetting(db, 'NOTIFICATION_RULES', JSON.stringify(notificationRules));
-      res.json({ message: 'Risk and notification rules saved' });
+      await auditLog(db, {
+        tenant_id: req.tenant_id,
+        actor: req.user,
+        event_name: 'risk_rules_updated',
+        status: 'success'
+      });
+      return res.json({ message: 'Risk and notification rules saved' });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: err.message });
     }
   });
 

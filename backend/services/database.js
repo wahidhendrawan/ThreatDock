@@ -329,8 +329,15 @@ function createDatabase() {
 
 async function createSchema(db) {
   const statements = [
+    `CREATE TABLE IF NOT EXISTS tenants (
+      id SERIAL PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )`,
     `CREATE TABLE IF NOT EXISTS alerts (
       id SERIAL PRIMARY KEY,
+      tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
       source TEXT,
       "externalId" TEXT,
       title TEXT,
@@ -349,6 +356,7 @@ async function createSchema(db) {
     )`,
     `CREATE TABLE IF NOT EXISTS assets (
       id SERIAL PRIMARY KEY,
+      tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
       domain TEXT,
       ip TEXT,
       port INTEGER,
@@ -363,10 +371,11 @@ async function createSchema(db) {
       last_seen TIMESTAMPTZ,
       notes TEXT,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(domain, ip, port)
+      UNIQUE(tenant_id, domain, ip, port)
     )`,
     `CREATE TABLE IF NOT EXISTS hunt_queries (
       id SERIAL PRIMARY KEY,
+      tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
       query_type TEXT,
       query_value TEXT,
       results TEXT,
@@ -375,17 +384,20 @@ async function createSchema(db) {
     )`,
     `CREATE TABLE IF NOT EXISTS vendors (
       id SERIAL PRIMARY KEY,
-      name TEXT UNIQUE,
+      tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+      name TEXT,
       category TEXT,
       risk_score INTEGER DEFAULT 0,
       status TEXT DEFAULT 'Active',
       contact TEXT,
       last_assessment TIMESTAMPTZ,
       notes TEXT,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(tenant_id, name)
     )`,
     `CREATE TABLE IF NOT EXISTS osint_findings (
       id SERIAL PRIMARY KEY,
+      tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
       category TEXT,
       keyword TEXT,
       provider TEXT,
@@ -404,10 +416,15 @@ async function createSchema(db) {
     )`,
     `CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
+      tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
       username TEXT UNIQUE,
       password_hash TEXT,
       email TEXT,
       role TEXT DEFAULT 'Analyst',
+      roles TEXT DEFAULT '["viewer"]',
+      auth_provider TEXT DEFAULT 'local',
+      oidc_issuer TEXT,
+      oidc_subject TEXT,
       mfa_secret TEXT,
       mfa_enabled INTEGER DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -421,12 +438,18 @@ async function createSchema(db) {
     )`,
     `CREATE TABLE IF NOT EXISTS audit_logs (
       id SERIAL PRIMARY KEY,
+      tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
       entity_type TEXT,
       entity_id TEXT,
       "user" TEXT,
+      actor_sub TEXT,
+      actor_email TEXT,
       action TEXT,
+      event_name TEXT,
+      status TEXT,
       before_value TEXT,
       after_value TEXT,
+      metadata TEXT DEFAULT '{}',
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS source_health (
@@ -508,7 +531,42 @@ async function createSchema(db) {
     'CREATE INDEX IF NOT EXISTS idx_alerts_status_date ON alerts(status, date)',
     'CREATE INDEX IF NOT EXISTS idx_alert_comments_alert_id ON alert_comments(alert_id)',
     'CREATE INDEX IF NOT EXISTS idx_correlated_findings_score_updated ON correlated_findings(score DESC, updated_at DESC)',
-    'CREATE INDEX IF NOT EXISTS idx_ingestion_runs_started_at ON ingestion_runs(started_at DESC)'
+    'CREATE INDEX IF NOT EXISTS idx_ingestion_runs_started_at ON ingestion_runs(started_at DESC)',
+    // Compatibility migrations for databases created before tenancy/RBAC.
+    'ALTER TABLE alerts ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
+    'ALTER TABLE assets ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
+    'ALTER TABLE hunt_queries ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
+    'ALTER TABLE vendors ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
+    'ALTER TABLE osint_findings ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS roles TEXT DEFAULT \'["viewer"]\'',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT \'local\'',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_issuer TEXT',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_subject TEXT',
+    'ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
+    'ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_sub TEXT',
+    'ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_email TEXT',
+    'ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS status TEXT',
+    'ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_name TEXT',
+    'ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata TEXT DEFAULT \'{}\'',
+    // The default tenant is created before old rows are backfilled.
+    "INSERT INTO tenants (name, slug) VALUES ('Default', 'default') ON CONFLICT (slug) DO NOTHING",
+    "UPDATE alerts SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default') WHERE tenant_id IS NULL",
+    "UPDATE assets SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default') WHERE tenant_id IS NULL",
+    "UPDATE hunt_queries SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default') WHERE tenant_id IS NULL",
+    "UPDATE vendors SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default') WHERE tenant_id IS NULL",
+    "UPDATE osint_findings SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default') WHERE tenant_id IS NULL",
+    "UPDATE users SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default') WHERE tenant_id IS NULL",
+    "UPDATE users SET roles = '[\"admin\"]' WHERE role IN ('Admin', 'admin') AND (roles IS NULL OR roles = '' OR roles = '[\"viewer\"]')",
+    "UPDATE audit_logs SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default') WHERE tenant_id IS NULL",
+    'CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant ON audit_logs(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_alerts_tenant ON alerts(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_assets_tenant ON assets(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_vendors_tenant ON vendors(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_hunt_queries_tenant ON hunt_queries(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_osint_findings_tenant ON osint_findings(tenant_id)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS unique_users_oidc ON users(tenant_id, oidc_issuer, oidc_subject) WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL'
   ];
 
   for (const statement of statements) {
@@ -524,24 +582,36 @@ async function seedDefaults(db) {
     );
   }
 
-  const row = await db.get('SELECT COUNT(*) AS count FROM users');
-  if (Number(row && row.count) === 0) {
-    const adminUser = process.env.AUTH_USER || 'admin';
+  const tenant = await db.get("SELECT id FROM tenants WHERE slug = 'default'");
+  if (!tenant) throw new Error('Default tenant was not created');
+
+  const adminUser = process.env.AUTH_USER || 'admin';
+  const existingAdmin = await db.get(
+    'SELECT id FROM users WHERE tenant_id = ? AND username = ?',
+    [tenant.id, adminUser]
+  );
+  if (!existingAdmin) {
     const adminPass = process.env.AUTH_PASSWORD || 'admin';
     const hash = bcrypt.hashSync(adminPass, 10);
     await db.run(
-      "INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'Admin')",
-      [adminUser, hash]
+      `INSERT INTO users (tenant_id, username, password_hash, role, roles, auth_provider)
+       VALUES (?, ?, ?, 'Admin', ?, 'local')`,
+      [tenant.id, adminUser, hash, JSON.stringify(['admin'])]
     );
   }
 }
 
-async function initializeDatabase(db) {
+async function migrateSchema(db) {
   await createSchema(db);
+}
+
+async function initializeDatabase(db) {
+  await migrateSchema(db);
   await seedDefaults(db);
 }
 
 module.exports = {
   createDatabase,
-  initializeDatabase
+  initializeDatabase,
+  migrateSchema
 };
