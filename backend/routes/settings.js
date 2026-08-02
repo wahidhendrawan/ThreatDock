@@ -10,7 +10,7 @@ module.exports = function(db) {
   // GET /api/settings
   router.get('/', requireRole('viewer'), async (req, res) => {
     try {
-      res.json(await settingsStore.getSettings(db));
+            res.json(settingsStore.maskSecrets(await settingsStore.getSettings(db)));
     } catch {
       res.status(500).json({ error: 'Database error' });
     }
@@ -34,6 +34,8 @@ module.exports = function(db) {
       });
       const actor = req.user ? req.user.name || req.user.email || 'Admin' : 'Admin';
       const changedEntries = Object.entries(settings).filter(([key, value]) => {
+        // Skip [redacted] placeholder — frontend sends this for unchanged secrets
+        if (String(value ?? '') === '[redacted]') return false;
         return !existingKeys.has(key) || String(value ?? '') !== String(before[key] ?? '');
       });
 
