@@ -1,0 +1,70 @@
+# Prometheus alerting rules for ThreatDock.
+# Import via `rule_files` in prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/threatdock-alerts.yml
+groups:
+  - name: threatdock.availability
+    interval: 30s
+    rules:
+      - alert: ThreatDockBackendDown
+        expr: up{job="threatdock-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: threatdock-backend
+        annotations:
+          summary: "ThreatDock backend is unreachable"
+          description: "Prometheus has been unable to scrape {{ $labels.instance }} for over two minutes."
+          runbook: "Check container status: `docker compose ps backend` and logs: `docker compose logs backend`."
+
+      - alert: ThreatDockHighErrorRate
+        expr: |
+          sum(rate(threatdock_http_requests_total{status_code=~"5.."}[5m]))
+            /
+          sum(rate(threatdock_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: threatdock-backend
+        annotations:
+          summary: "Elevated 5xx error rate ({{ $value | humanizePercentage }})"
+          description: "More than 5% of HTTP responses are 5xx over the last five minutes."
+
+      - alert: ThreatDockHighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(threatdock_http_request_duration_seconds_bucket[5m])) by (le, route)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: threatdock-backend
+        annotations:
+          summary: "p95 latency above 2s on {{ $labels.route }}"
+          description: "Investigate slow upstream feeds, DB contention, or CPU saturation."
+
+  - name: threatdock.resources
+    interval: 1m
+    rules:
+      - alert: ThreatDockHighMemory
+        expr: threatdock_process_resident_memory_bytes > 1.2e9
+        for: 15m
+        labels:
+          severity: warning
+          service: threatdock-backend
+        annotations:
+          summary: "Resident memory above 1.2 GiB"
+          description: "Node.js RSS = {{ $value | humanize1024 }}B. Consider heap dump / GC tuning."
+
+  - name: threatdock.pipeline
+    interval: 1m
+    rules:
+      - alert: ThreatDockDLQGrowing
+        expr: increase(threatdock_dlq_size[15m]) > 20
+        for: 15m
+        labels:
+          severity: warning
+          service: threatdock-backend
+        annotations:
+          summary: "Dead-letter queue is growing"
+          description: "More than 20 new DLQ entries in the last 15 minutes. Check upstream feed reliability."

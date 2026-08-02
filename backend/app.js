@@ -4,6 +4,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const observability = require('./services/observability');
+const tracing = require('./services/tracing');
 const { schedule } = require('./services/scheduler');
 const errorMonitor = require('./services/errorMonitor');
 
@@ -57,6 +58,7 @@ app.use((req, res, next) => {
 });
 app.use(cors());
 
+app.use(tracing.traceContextMiddleware);
 app.use(observability.requestIdMiddleware);
 app.use(observability.requestLoggingMiddleware);
 
@@ -691,6 +693,68 @@ app.get('/readyz', async (req, res) => {
 app.get('/metrics', (req, res) => {
   res.set('Content-Type', 'text/plain');
   res.send(observability.renderPrometheusMetrics());
+});
+
+// Status page - comprehensive service health dashboard
+app.get('/status', async (req, res) => {
+  const cache = require('./services/cache');
+  const checks = {
+    timestamp: new Date().toISOString(),
+    service: 'threatdock-backend',
+    uptime_seconds: Math.floor(process.uptime()),
+    checks: {}
+  };
+
+  // Database check
+  try {
+    await db.query('SELECT 1');
+    checks.checks.database = { status: 'healthy', latency_ms: null };
+  } catch (err) {
+    checks.checks.database = { status: 'unhealthy', error: err.message };
+  }
+
+  // Cache check
+  const cacheStats = cache.stats();
+  checks.checks.cache = {
+    status: 'healthy',
+    backend: cacheStats.backend,
+    redis_ready: cacheStats.redis_ready,
+    memory_entries: cacheStats.memory_entries
+  };
+
+  // Circuit breaker status
+  const cbStatus = circuitBreaker.getStatus();
+  const openCircuits = cbStatus.filter(c => c.state === 'OPEN').length;
+  checks.checks.circuit_breakers = {
+    status: openCircuits > 0 ? 'degraded' : 'healthy',
+    open_circuits: openCircuits,
+    sources: cbStatus
+  };
+
+  // Dead letter queue status
+  const dlqStats = await deadLetterQueue.getStats();
+  const pendingCount = dlqStats
+    .filter(row => row.status === 'pending')
+    .reduce((sum, row) => sum + Number(row.count || 0), 0);
+  checks.checks.dead_letter_queue = {
+    status: pendingCount > 50 ? 'degraded' : 'healthy',
+    pending: pendingCount,
+    by_source: dlqStats
+  };
+
+  // Memory
+  const memUsage = process.memoryUsage();
+  checks.checks.memory = {
+    status: memUsage.rss < 1.5e9 ? 'healthy' : 'warning',
+    rss_bytes: memUsage.rss,
+    heap_used_bytes: memUsage.heapUsed
+  };
+
+  // Overall status
+  const unhealthy = Object.values(checks.checks).some(c => c.status === 'unhealthy');
+  checks.status = unhealthy ? 'unhealthy' : 'healthy';
+
+  res.status(unhealthy ? 503 : 200).json(checks);
 });
 
 // Health endpoint
