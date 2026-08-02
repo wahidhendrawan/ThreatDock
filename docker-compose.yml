@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-threatdock}
       POSTGRES_USER: ${POSTGRES_USER:-threatdock}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-threatdock_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set, see .env.example}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -33,7 +33,7 @@ services:
       PGPORT: 5432
       PGDATABASE: ${POSTGRES_DB:-threatdock}
       PGUSER: ${POSTGRES_USER:-threatdock}
-      PGPASSWORD: ${POSTGRES_PASSWORD:-threatdock_change_me}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set, see .env.example}
       REDIS_URL: redis://redis:6379
     ports:
       - "5002:5002"
@@ -58,7 +58,7 @@ services:
       sh -c "echo '0 */6 * * * /usr/local/bin/backup.sh' > /etc/crontabs/root && crond -f -l 2"
     environment:
       PGUSER: ${POSTGRES_USER:-threatdock}
-      PGPASSWORD: ${POSTGRES_PASSWORD:-threatdock_change_me}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set, see .env.example}
       PGDATABASE: ${POSTGRES_DB:-threatdock}
     volumes:
       - ./backups:/backups

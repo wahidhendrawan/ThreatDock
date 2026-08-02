@@ -3,6 +3,8 @@ on: [push, pull_request]
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-validate-password
     steps:
       - uses: actions/checkout@v4
       - name: Create env files for validation
