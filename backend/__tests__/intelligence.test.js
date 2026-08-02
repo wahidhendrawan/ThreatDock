@@ -100,3 +100,46 @@ describe('extractDomains', () => {
     expect(extractDomains(null)).toEqual([]);
   });
 });
+
+describe('saveIndicatorsFromAlerts', () => {
+  const { saveIndicatorsFromAlerts } = require('../services/intelligence');
+
+  test('deduplicates identical indicators from the same source before insert', async () => {
+    const db = { query: jest.fn().mockResolvedValue({}) };
+    const alerts = [
+      { source: 'NVD', externalId: 'CVE-2026-12345', title: 'CVE-2026-12345', severity: 'High' },
+      { source: 'NVD', title: 'Duplicate CVE-2026-12345', severity: 'Critical' }
+    ];
+
+    await saveIndicatorsFromAlerts(db, alerts);
+
+    expect(db.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('ON CONFLICT(source, value, type) DO UPDATE');
+    expect(params).toHaveLength(9);
+    expect(params.slice(0, 3)).toEqual(['CVE-2026-12345', 'cve', 'NVD']);
+  });
+
+  test('retains the same indicator reported by different sources', async () => {
+    const db = { query: jest.fn().mockResolvedValue({}) };
+    const alerts = [
+      { source: 'NVD', title: 'CVE-2026-12345', severity: 'High' },
+      { source: 'CISA', title: 'CVE-2026-12345', severity: 'Critical' }
+    ];
+
+    await saveIndicatorsFromAlerts(db, alerts);
+
+    const params = db.query.mock.calls[0][1];
+    expect(params).toHaveLength(18);
+    expect(params[2]).toBe('NVD');
+    expect(params[11]).toBe('CISA');
+  });
+
+  test('does not issue an insert when no indicators are extracted', async () => {
+    const db = { query: jest.fn() };
+
+    await saveIndicatorsFromAlerts(db, [{ source: 'RSS', title: 'General security news' }]);
+
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
