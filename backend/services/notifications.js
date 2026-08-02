@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { outboundHttp: axios } = require('./outboundHttp');
 
 /*
  * Notification Service

@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { outboundHttp: axios } = require('./outboundHttp');
 
 /**
  * Fetch CVEs from NVD API — optimized for hourly ingestion.

@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { outboundHttp: axios } = require('./outboundHttp');
 const settingsStore = require('./settingsStore');
 
 function uniqueBy(items, keyFn) {

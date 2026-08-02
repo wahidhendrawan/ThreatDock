@@ -5,7 +5,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
+const { outboundHttp: axios } = require('./outboundHttp');
 
 const LOG_DIR = process.env.ERROR_LOG_DIR || './logs';
 const WEBHOOK_URL = process.env.ERROR_WEBHOOK_URL || '';

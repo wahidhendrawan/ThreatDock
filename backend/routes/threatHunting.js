@@ -1,5 +1,5 @@
 const express = require('express');
-const axios = require('axios');
+const { outboundHttp: axios } = require('../services/outboundHttp');
 const crypto = require('crypto');
 const { requireRole } = require('../services/identity');
 const intelligence = require('../services/intelligence');

@@ -1,5 +1,14 @@
 const Parser = require('rss-parser');
 
+const { resolvePublicAddresses } = require('./outboundHttp');
+
+// Wrap RSS parser HTTP requests with SSRF guard
+const originalParseURL = Parser.prototype.parseURL;
+Parser.prototype.parseURL = async function parseURLWithGuard(url, ...args) {
+  await resolvePublicAddresses(new URL(url).hostname);
+  return originalParseURL.call(this, url, ...args);
+};
+
 // Use node-fetch to provide custom behavior if needed, or simply standard custom headers
 const parser = new Parser({
   timeout: 10000,

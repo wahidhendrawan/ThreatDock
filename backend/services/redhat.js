@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { outboundHttp: axios } = require('./outboundHttp');
 
 /**
  * Fetch recent Red Hat CVEs from Red Hat's public security data API.

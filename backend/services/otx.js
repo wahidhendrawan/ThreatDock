@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { outboundHttp: axios } = require('./outboundHttp');
 
 /**
  * Fetch subscribed pulses from AlienVault Open Threat Exchange (OTX).
