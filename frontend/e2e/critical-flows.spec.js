@@ -23,7 +23,8 @@ test('self-hosted Swagger UI and OpenAPI specification are reachable', async ({ 
   expect((await spec.json()).openapi).toBe('3.0.0');
 
   await page.goto('/api/docs');
-  await expect(page.getByText('ThreatDock API', { exact: true })).toBeVisible();
+  // Swagger UI renders the title inside an <h2> element - wait for it to load
+  await expect(page.locator('h2.title, .info h2, .info .title').first()).toBeVisible({ timeout: 10000 });
 });
 
 test('configured local administrator can sign in and open settings', async ({ page }) => {

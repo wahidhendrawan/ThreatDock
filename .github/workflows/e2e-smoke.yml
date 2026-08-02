@@ -38,6 +38,7 @@ jobs:
           POSTGRES_DB=threatdock
           POSTGRES_USER=threatdock
           POSTGRES_PASSWORD=ci-smoke-password
+          AUTH_USER=threatdock
           AUTH_PASSWORD=ci-smoke-admin-password
           JWT_SECRET=ci-smoke-test-secret
           EOF
