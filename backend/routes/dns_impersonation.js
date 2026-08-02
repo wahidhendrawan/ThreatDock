@@ -1,6 +1,7 @@
 const express = require('express');
 const dns = require('dns').promises;
 const { generateMutations } = require('../services/dnstwist');
+const { requireRole } = require('../services/identity');
 
 const COMMON_TLD_VARIANTS = [
   'com', 'net', 'org', 'co', 'id', 'io', 'biz', 'info', 'xyz', 'site',
@@ -34,29 +35,19 @@ function buildCandidateDomains(domain) {
   const parsed = parseDomain(domain);
   const candidates = new Set(generateMutations(domain));
   if (!parsed) return [...candidates];
-
-  // TLD substitutions (common phishing/impersonation patterns)
   for (const tld of COMMON_TLD_VARIANTS) {
-    if (tld !== parsed.tld) {
-      candidates.add(`${parsed.brand}.${tld}`);
-    }
+    if (tld !== parsed.tld) candidates.add(`${parsed.brand}.${tld}`);
   }
-
-  // Brand affixes (e.g. brand-login.com, brandsecure.com)
   for (const affix of BRAND_AFFIXES) {
     candidates.add(`${parsed.brand}-${affix}.${parsed.tld}`);
     candidates.add(`${parsed.brand}${affix}.${parsed.tld}`);
   }
-
   candidates.delete(domain);
   return [...candidates].slice(0, 180);
 }
 
 function withTimeout(promise, timeoutMs = 2200) {
-  return Promise.race([
-    promise,
-    new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs))
-  ]).catch(() => []);
+  return Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs))]).catch(() => []);
 }
 
 async function lookupDomainRecords(domain) {
@@ -95,18 +86,11 @@ module.exports = function createDnsImpersonationRouter(db) {
     if (!isValidDomain(domain)) {
       return res.status(400).json({ error: 'Valid domain is required' });
     }
-
     try {
       const mutations = buildCandidateDomains(domain);
-
-      // Perform parallel DNS lookups across mutation + TLD candidate set
-      const lookupPromises = mutations.map(async (mutant) => {
-        return lookupDomainRecords(mutant);
-      });
-
+      const lookupPromises = mutations.map(async (mutant) => lookupDomainRecords(mutant));
       const resolved = await Promise.all(lookupPromises);
       const activeImpersonators = resolved.filter(Boolean);
-
       res.json({
         original: domain,
         mutations_generated: mutations.length,
@@ -118,8 +102,8 @@ module.exports = function createDnsImpersonationRouter(db) {
     }
   };
 
-  router.post('/scan', handleScan);
-  router.post('/', handleScan);
+  router.post('/scan', requireRole('viewer'), handleScan);
+  router.post('/', requireRole('viewer'), handleScan);
 
   return router;
 };

@@ -212,7 +212,13 @@ async function fetchSourceWithHealth(source, fetcher) {
   return [];
 }
 
-async function persistAlerts(alerts) {
+async function getDefaultTenant() {
+  const result = await db.query("SELECT id FROM tenants WHERE slug = 'default'");
+  if (result.rows.length === 0) throw new Error('Default tenant not found');
+  return result.rows[0].id;
+}
+
+async function persistAlerts(alerts, tenantId) {
   if (alerts.length === 0) return;
   // Deduplicate by (source, externalId) to avoid ON CONFLICT errors in batch
   const seen = new Set();
@@ -230,9 +236,10 @@ async function persistAlerts(alerts) {
     const params = [];
     let idx = 0;
     for (const alert of batch) {
-      const n = idx * 8;
-      values.push(`($${n+1},$${n+2},$${n+3},$${n+4},$${n+5},$${n+6},$${n+7},$${n+8})`);
+      const n = idx * 9;
+      values.push(`($${n+1},$${n+2},$${n+3},$${n+4},$${n+5},$${n+6},$${n+7},$${n+8},$${n+9})`);
       params.push(
+        tenantId,
         alert.source,
         alert.externalId,
         alert.title,
@@ -245,7 +252,7 @@ async function persistAlerts(alerts) {
       idx++;
     }
     await db.query(`
-      INSERT INTO alerts (source, "externalId", title, severity, date, url, status, attack_phase)
+      INSERT INTO alerts (tenant_id, source, "externalId", title, severity, date, url, status, attack_phase)
       VALUES ${values.join(', ')}
       ON CONFLICT(source, "externalId") DO UPDATE SET
         title = excluded.title,
@@ -280,6 +287,9 @@ async function fetchAllSources() {
   fetchStartedAt = Date.now();
   try {
     await applyRuntimeSettings();
+
+    // Get default tenant for background writes
+    const defaultTenantId = await getDefaultTenant();
 
     const JOB_TIMEOUT = 60000; // 60s per source max
     const withTimeout = (name, fn) =>
@@ -482,7 +492,7 @@ async function fetchAllSources() {
     }
 
     // Persist alerts to DB using upsert to avoid overwriting user updates (status, attack_phase)
-    await persistAlerts(alerts);
+    await persistAlerts(alerts, defaultTenantId);
     io.emit('alerts:updated', { count: alerts.length });
 
     console.log(`Fetched and stored ${alerts.length} alerts.`);
@@ -500,8 +510,8 @@ async function fetchAllSources() {
       if (Array.isArray(monitoredBrands) && monitoredBrands.length > 0) {
         console.log(`Starting automated brand monitoring for: ${monitoredBrands.join(', ')}`);
         await Promise.all(monitoredBrands.map(async (brand) => {
-          const brandResults = await osintService.searchBrandExposure(db, brand);
-          osintService.saveFindings(db, 'brand-exposure', brand, brandResults);
+          const brandResults = await osintService.searchBrandExposure(db, brand, defaultTenantId);
+          osintService.saveFindings(db, defaultTenantId, 'brand-exposure', brand, brandResults);
         }));
       }
     } catch (brandErr) {
