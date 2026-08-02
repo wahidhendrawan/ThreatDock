@@ -87,9 +87,35 @@ function actorName(actor) {
   return actor.name || actor.username || actor.email || actor.preferred_username || actor.sub || 'unknown';
 }
 
+/**
+ * Delete audit log entries older than the retention window.
+ * Intended to be run on a schedule (e.g. weekly) to bound table growth
+ * while preserving a compliance-friendly history window.
+ * @param {object} db database adapter
+ * @param {number} retentionDays days of history to keep (default 90)
+ * @returns {Promise<number>} number of rows deleted
+ */
+async function pruneOldAuditLogs(db, retentionDays = 90) {
+  try {
+    const result = await db.query(
+      `DELETE FROM audit_logs WHERE created_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 day')`,
+      [retentionDays]
+    );
+    const deleted = result.rowCount || 0;
+    if (deleted > 0) {
+      console.log(`[Audit] Pruned ${deleted} audit log entries older than ${retentionDays} days.`);
+    }
+    return deleted;
+  } catch (err) {
+    console.error('pruneOldAuditLogs failed:', err.message);
+    return 0;
+  }
+}
+
 module.exports = {
   sanitize,
   extractActor,
   auditLog,
-  actorName
+  actorName,
+  pruneOldAuditLogs
 };

@@ -19,18 +19,26 @@ setInterval(() => {
  * @param {number} windowMs - Time window in milliseconds (default 60000)
  * @param {number} max - Max requests per window (default 100)
  * @param {string} message - Error message when rate limited
+ * @param {function} keyFn - Optional function to generate rate limit key from request (defaults to IP)
  */
-function rateLimit({ windowMs = 60000, max = 100, message = 'Too many requests' } = {}) {
+function rateLimit({ windowMs = 60000, max = 100, message = 'Too many requests', keyFn } = {}) {
   return (req, res, next) => {
-    // Use X-Forwarded-For when behind proxy, fallback to req.ip
-    const forwarded = req.headers['x-forwarded-for'];
-    const ip = forwarded ? forwarded.split(',')[0].trim() : (req.ip || req.connection.remoteAddress || 'unknown');
+    // Use custom keyFn if provided, otherwise fall back to IP-based limiting
+    let key;
+    if (typeof keyFn === 'function') {
+      key = keyFn(req);
+    }
+    // Fallback to IP if keyFn not provided or returns falsy
+    if (!key) {
+      const forwarded = req.headers['x-forwarded-for'];
+      key = forwarded ? forwarded.split(',')[0].trim() : (req.ip || req.connection.remoteAddress || 'unknown');
+    }
     const now = Date.now();
-    let entry = rateStore.get(ip);
+    let entry = rateStore.get(key);
 
     if (!entry || now > entry.resetAt) {
       entry = { count: 1, resetAt: now + windowMs };
-      rateStore.set(ip, entry);
+      rateStore.set(key, entry);
       return next();
     }
 
