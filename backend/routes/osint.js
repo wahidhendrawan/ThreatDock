@@ -1,5 +1,5 @@
 const express = require('express');
-const axios = require('axios');
+const { outboundHttp: axios } = require('../services/outboundHttp');
 const settingsStore = require('../services/settingsStore');
 const osintService = require('../services/osint');
 

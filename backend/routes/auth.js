@@ -53,7 +53,7 @@ router.get('/login', async (req, res) => {
 
     // Try to discover via well-known configuration
     try {
-      const axios = require('axios');
+      const { outboundHttp: axios } = require('../services/outboundHttp');
       const discoveryUrl = settings.OIDC_ISSUER_URL.endsWith('/') ? 
         `${settings.OIDC_ISSUER_URL}.well-known/openid-configuration` : 
         `${settings.OIDC_ISSUER_URL}/.well-known/openid-configuration`;

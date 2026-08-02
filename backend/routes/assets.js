@@ -1,7 +1,7 @@
 const express = require('express');
 const dns = require('dns').promises;
 const net = require('net');
-const axios = require('axios');
+const { outboundHttp: axios } = require('../services/outboundHttp');
 const settingsStore = require('../services/settingsStore');
 
 const COMMON_PORTS = [80, 443, 8080, 8443, 22, 25, 53, 110, 143, 993, 995, 3389];
