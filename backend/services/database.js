@@ -504,6 +504,20 @@ async function createSchema(db) {
       status TEXT DEFAULT 'Open',
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     )`,
+    `CREATE TABLE IF NOT EXISTS dead_letter_queue (
+      id SERIAL PRIMARY KEY,
+      source TEXT NOT NULL,
+      item_type TEXT,
+      item_data TEXT,
+      error_message TEXT,
+      attempt_count INTEGER DEFAULT 1,
+      first_attempt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      last_attempt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      status TEXT DEFAULT 'pending',
+      resolved_at TIMESTAMPTZ,
+      resolved_by TEXT,
+      notes TEXT
+    )`,
     `CREATE TABLE IF NOT EXISTS cve_enrichment (
       cve_id TEXT PRIMARY KEY,
       epss_score REAL,
@@ -532,6 +546,8 @@ async function createSchema(db) {
     'CREATE INDEX IF NOT EXISTS idx_alert_comments_alert_id ON alert_comments(alert_id)',
     'CREATE INDEX IF NOT EXISTS idx_correlated_findings_score_updated ON correlated_findings(score DESC, updated_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_ingestion_runs_started_at ON ingestion_runs(started_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_dlq_source_status ON dead_letter_queue(source, status)',
+    'CREATE INDEX IF NOT EXISTS idx_dlq_last_attempt ON dead_letter_queue(last_attempt DESC)',
     // Compatibility migrations for databases created before tenancy/RBAC.
     'ALTER TABLE alerts ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
     'ALTER TABLE assets ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
