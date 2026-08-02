@@ -25,6 +25,8 @@ jobs:
     name: Docker Compose smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      POSTGRES_PASSWORD: ci-smoke-password
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +38,7 @@ jobs:
           POSTGRES_DB=threatdock
           POSTGRES_USER=threatdock
           POSTGRES_PASSWORD=ci-smoke-password
+          AUTH_PASSWORD=ci-smoke-admin-password
           JWT_SECRET=ci-smoke-test-secret
           EOF
           fi
