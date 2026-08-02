@@ -107,8 +107,10 @@ function renderPrometheusMetrics() {
   );
   for (const [key, measurement] of requestDurations) {
     const [method, route] = key.split('|');
+    let cumulative = 0;
     durationBuckets.forEach((bucket, index) => {
-      lines.push(`threatdock_http_request_duration_seconds_bucket{${formatLabels({ method, route, le: bucket })}} ${measurement.buckets[index]}`);
+      cumulative += measurement.buckets[index];
+      lines.push(`threatdock_http_request_duration_seconds_bucket{${formatLabels({ method, route, le: bucket })}} ${cumulative}`);
     });
     lines.push(`threatdock_http_request_duration_seconds_bucket{${formatLabels({ method, route, le: '+Inf' })}} ${measurement.count}`);
     lines.push(`threatdock_http_request_duration_seconds_sum{${formatLabels({ method, route })}} ${measurement.sum}`);

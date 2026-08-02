@@ -119,6 +119,8 @@ PostgreSQL data is persisted on the host at `./data/postgres`. To override the d
 - **Default login**: As configured in `.env` (`AUTH_USER` / `AUTH_PASSWORD`)
 - **API Documentation**: `http://localhost:3000/api/docs`
 - **Backend Health**: `http://localhost:5002/`
+- **Liveness / readiness**: `http://localhost:5002/healthz` and `http://localhost:5002/readyz`
+- **Prometheus metrics**: `http://localhost:5002/metrics`
 
 ---
 
@@ -221,7 +223,50 @@ cd backend
 npm test
 ```
 
-Unit tests cover intelligence service (severity normalization, CVE extraction, domain parsing, indicator type detection), in-memory cache module (set/get/TTL/del/flush), and job queue (buffered processing).
+Unit tests cover intelligence service (severity normalization, CVE extraction, domain parsing, indicator type detection), in-memory cache module (set/get/TTL/del/flush), job queue (buffered processing), API observability, and frontend UI flows.
+
+### Frontend Unit Tests
+```bash
+cd frontend
+CI=true npm run test:ci
+```
+
+### Browser E2E Tests
+Start the Docker Compose stack first, then run Playwright against the frontend proxy. The authenticated scenario requires the seeded administrator credentials.
+
+```bash
+docker compose up -d --build
+cd frontend
+npx playwright install chromium
+E2E_BASE_URL=http://localhost:3000 \
+E2E_USERNAME="${AUTH_USER:-threatdock}" \
+E2E_PASSWORD="$AUTH_PASSWORD" \
+npm run test:e2e
+```
+
+The suite verifies liveness (including a correlation ID response header), the local login form, self-hosted Swagger UI/OpenAPI, authenticated dashboard access, and the Settings route.
+
+### Performance Baseline
+The portable Node.js benchmark exercises public read endpoints and, when `PERF_AUTH_TOKEN` is supplied, protected read endpoints. It reports P50/P95 latency and error rate as JSON. The default acceptance thresholds are **P95 < 500 ms** and **error rate < 1%**; set `PERF_ENFORCE_THRESHOLDS=true` to return a non-zero exit status when either is exceeded.
+
+```bash
+# Public endpoints only
+PERF_BASE_URL=http://localhost:5002 \
+PERF_ENFORCE_THRESHOLDS=true \
+node scripts/benchmark-api.js
+
+# Authenticated endpoints (obtain a JWT from POST /auth/local-login first)
+PERF_BASE_URL=http://localhost:5002 \
+PERF_AUTH_TOKEN="<jwt>" \
+PERF_REQUESTS=50 PERF_CONCURRENCY=5 \
+PERF_ENFORCE_THRESHOLDS=true \
+node scripts/benchmark-api.js
+
+# Optional sustained load profile (install k6 separately)
+k6 run performance/k6/read-api.js
+```
+
+The Docker Compose smoke workflow runs the authenticated browser suite and a 30-request, five-concurrent-worker performance baseline against its ephemeral stack.
 
 ---
 

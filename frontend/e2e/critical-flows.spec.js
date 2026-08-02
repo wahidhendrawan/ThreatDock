@@ -1,5 +1,13 @@
 const { test, expect } = require('@playwright/test');
 
+test('liveness probe is reachable through the frontend proxy', async ({ request }) => {
+  const response = await request.get('/healthz');
+
+  expect(response.status()).toBe(200);
+  expect(await response.text()).toBe('OK');
+  expect(response.headers()['x-request-id']).toBeTruthy();
+});
+
 test('unauthenticated users see the local login form', async ({ page }) => {
   await page.goto('/');
 
@@ -18,7 +26,7 @@ test('self-hosted Swagger UI and OpenAPI specification are reachable', async ({ 
   await expect(page.getByText('ThreatDock API', { exact: true })).toBeVisible();
 });
 
-test('configured local administrator can sign in and reach the dashboard', async ({ page }) => {
+test('configured local administrator can sign in and open settings', async ({ page }) => {
   test.skip(!process.env.E2E_USERNAME || !process.env.E2E_PASSWORD, 'Set E2E_USERNAME and E2E_PASSWORD to run authenticated flow.');
 
   await page.goto('/');
@@ -27,4 +35,6 @@ test('configured local administrator can sign in and reach the dashboard', async
   await page.getByRole('button', { name: 'Sign In' }).click();
 
   await expect(page.getByRole('heading', { name: 'Overview Dashboard' })).toBeVisible();
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings & Management' })).toBeVisible();
 });

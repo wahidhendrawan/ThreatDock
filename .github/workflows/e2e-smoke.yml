@@ -72,14 +72,58 @@ jobs:
           docker compose logs frontend | tail -50
           exit 1
 
-      - name: Smoke check - health endpoints
+      - name: Smoke check - health and observability endpoints
         run: |
           echo "=== Backend root ==="
           curl -fsS http://localhost:5002/
           echo ""
+          echo "=== Liveness and readiness ==="
+          test "$(curl -fsS http://localhost:5002/healthz)" = "OK"
+          test "$(curl -fsS http://localhost:5002/readyz)" = "OK"
+          echo "=== Prometheus metrics ==="
+          curl -fsS http://localhost:5002/metrics | grep -q '^# HELP threatdock_http_requests_total'
           echo "=== Auth config (unauthenticated) ==="
           curl -fsS http://localhost:5002/auth/config | head -c 200
           echo ""
+
+      - name: Install Playwright
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run critical browser flows
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_USERNAME: threatdock
+          E2E_PASSWORD: ci-smoke-admin-password
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Run read API performance baseline
+        env:
+          PERF_BASE_URL: http://localhost:5002
+          PERF_REQUESTS: 30
+          PERF_CONCURRENCY: 5
+          PERF_MAX_P95_MS: 500
+          PERF_MAX_ERROR_RATE: 0.01
+          PERF_ENFORCE_THRESHOLDS: "true"
+        run: |
+          PERF_AUTH_TOKEN="$(node -e '
+            fetch("http://localhost:5002/auth/local-login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username: "threatdock", password: "ci-smoke-admin-password" })
+            })
+              .then(async response => {
+                const payload = await response.json();
+                if (!response.ok || !payload.access_token) throw new Error(payload.error || `Login failed (${response.status})`);
+                process.stdout.write(payload.access_token);
+              })
+              .catch(error => { console.error(error.message); process.exit(1); });
+          ')"
+          export PERF_AUTH_TOKEN
+          node scripts/benchmark-api.js
 
       - name: Dump logs on failure
         if: failure()
