@@ -439,8 +439,9 @@ function AppContent() {
           {!mfaRequired ? (
             <form onSubmit={handleLogin} className="flex flex-col gap-4 text-left">
               <div className="form-group">
-                <label className="form-label">Username</label>
+                <label htmlFor="login-username" className="form-label">Username</label>
                 <input 
+                  id="login-username"
                   className="form-input" 
                   type="text" 
                   value={loginUser} 
@@ -451,8 +452,9 @@ function AppContent() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Password</label>
+                <label htmlFor="login-password" className="form-label">Password</label>
                 <input 
+                  id="login-password"
                   className="form-input" 
                   type="password" 
                   value={loginPass} 

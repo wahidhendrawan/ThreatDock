@@ -3,6 +3,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const observability = require('./services/observability');
 const { schedule } = require('./services/scheduler');
 const errorMonitor = require('./services/errorMonitor');
 
@@ -55,6 +56,9 @@ app.use((req, res, next) => {
   next();
 });
 app.use(cors());
+
+app.use(observability.requestIdMiddleware);
+app.use(observability.requestLoggingMiddleware);
 
 // P0-3: JSON body size limit (defense against oversized payloads).
 // Applies to all API requests. Individual routes may still layer stricter limits.
@@ -668,6 +672,26 @@ app.use('/api/users', apiLimiter, authMiddleware, usersRouter);
 
 const settingsRouter = require('./routes/settings')(db);
 app.use('/api/settings', apiLimiter, authMiddleware, settingsRouter);
+
+// Health and metrics endpoints
+app.get('/healthz', (req, res) => res.status(200).send('OK'));
+app.get('/readyz', async (req, res) => {
+  try {
+    // Check DB connection
+    await db.query('SELECT 1');
+    // Check if a fetch is in progress and for how long
+    if (fetchAllSourcesRunning && (Date.now() - fetchStartedAt) > 10 * 60 * 1000) {
+      return res.status(503).send('Service Unavailable: Long-running fetch in progress');
+    }
+    res.status(200).send('OK');
+  } catch (e) {
+    res.status(503).send('Service Unavailable: Database connection failed');
+  }
+});
+app.get('/metrics', (req, res) => {
+  res.set('Content-Type', 'text/plain');
+  res.send(observability.renderPrometheusMetrics());
+});
 
 // Health endpoint
 app.get('/', (req, res) => {
