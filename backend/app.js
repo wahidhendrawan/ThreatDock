@@ -21,6 +21,8 @@ const dbUtil = require('./services/db');
 const { createDatabase, initializeDatabase } = require('./services/database');
 const { JobQueue } = require('./services/queue');
 const { runRebuildCorrelations } = require('./services/worker');
+const { circuitBreaker, CircuitBreakerError } = require('./services/circuitBreaker');
+const { DeadLetterQueue } = require('./services/deadLetterQueue');
 
 const authMiddleware = require('./middleware/auth');
 const rateLimit = require('./middleware/rateLimit');
@@ -102,6 +104,7 @@ const io = new Server(server, {
 // Initialize PostgreSQL database adapter
 const db = createDatabase();
 const jobQueue = new JobQueue();
+const deadLetterQueue = new DeadLetterQueue(db);
 
 app.use((req, res, next) => {
   req.db = db;
@@ -168,34 +171,36 @@ function countFetchedItems(source, data) {
   return data ? 1 : 0;
 }
 
-function recordSourceRun(source, status, itemCount, durationMs, error, startedAt, finishedAt) {
+async function recordSourceRun(source, status, itemCount, durationMs, error, startedAt, finishedAt) {
   const errorText = error ? String(error).slice(0, 1000) : '';
-  db.run(
-    `INSERT INTO ingestion_runs (source, status, item_count, duration_ms, error, started_at, finished_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [source, status, itemCount, durationMs, errorText, startedAt, finishedAt]
-  );
-  db.run(
-    `INSERT INTO source_health (source, status, last_success, last_failure, last_error, last_count, last_duration_ms, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(source) DO UPDATE SET
-       status = excluded.status,
-       last_success = CASE WHEN excluded.status = 'Success' THEN excluded.last_success ELSE source_health.last_success END,
-       last_failure = CASE WHEN excluded.status = 'Failure' THEN excluded.last_failure ELSE source_health.last_failure END,
-       last_error = excluded.last_error,
-       last_count = excluded.last_count,
-       last_duration_ms = excluded.last_duration_ms,
-       updated_at = CURRENT_TIMESTAMP`,
-    [
-      source,
-      status,
-      status === 'Success' ? finishedAt : null,
-      status === 'Failure' ? finishedAt : null,
-      errorText,
-      itemCount,
-      durationMs
-    ]
-  );
+  await Promise.all([
+    db.run(
+      `INSERT INTO ingestion_runs (source, status, item_count, duration_ms, error, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [source, status, itemCount, durationMs, errorText, startedAt, finishedAt]
+    ),
+    db.run(
+      `INSERT INTO source_health (source, status, last_success, last_failure, last_error, last_count, last_duration_ms, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(source) DO UPDATE SET
+         status = excluded.status,
+         last_success = CASE WHEN excluded.status = 'Success' THEN excluded.last_success ELSE source_health.last_success END,
+         last_failure = CASE WHEN excluded.status = 'Failure' THEN excluded.last_failure ELSE source_health.last_failure END,
+         last_error = excluded.last_error,
+         last_count = excluded.last_count,
+         last_duration_ms = excluded.last_duration_ms,
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        source,
+        status,
+        status === 'Success' ? finishedAt : null,
+        status === 'Failure' ? finishedAt : null,
+        errorText,
+        itemCount,
+        durationMs
+      ]
+    )
+  ]);
   io.emit('source:health', { source, status, itemCount, durationMs });
 }
 
@@ -216,30 +221,61 @@ async function fetchSourceWithHealth(source, fetcher) {
   const startedAt = new Date().toISOString();
   const start = Date.now();
   const cfg = RETRY_CONFIGS[source] || RETRY_CONFIGS.default;
-  let lastErr = null;
-  for (let attempt = 0; attempt <= cfg.retries; attempt++) {
-    if (attempt > 0) {
-      const delay = cfg.baseDelay * Math.pow(2, attempt - 1);
-      console.log(`${source} retry ${attempt}/${cfg.retries} (delay ${delay}ms)...`);
-      await new Promise(r => setTimeout(r, delay));
-    }
-    try {
-      const data = await fetcher();
-      const finishedAt = new Date().toISOString();
-      recordSourceRun(source, 'Success', countFetchedItems(source, data), Date.now() - start, '', startedAt, finishedAt);
-      return data;
-    } catch (err) {
-      lastErr = err;
-      if (attempt < cfg.retries) {
-        // Transient error — will retry
-        console.warn(`${source} attempt ${attempt + 1} failed: ${err.message}`);
+
+  try {
+    const data = await circuitBreaker.execute(source, async () => {
+      let lastError;
+      for (let attempt = 0; attempt <= cfg.retries; attempt += 1) {
+        if (attempt > 0) {
+          const delay = cfg.baseDelay * (2 ** (attempt - 1));
+          console.log(`${source} retry ${attempt}/${cfg.retries} (delay ${delay}ms)...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
+        try {
+          return await fetcher();
+        } catch (error) {
+          lastError = error;
+          if (attempt < cfg.retries) {
+            console.warn(`${source} attempt ${attempt + 1} failed: ${error.message}`);
+          }
+        }
       }
+      throw lastError || new Error(`${source} fetch failed`);
+    });
+
+    const finishedAt = new Date().toISOString();
+    await recordSourceRun(
+      source,
+      'Success',
+      countFetchedItems(source, data),
+      Date.now() - start,
+      '',
+      startedAt,
+      finishedAt
+    );
+    return data;
+  } catch (error) {
+    const finishedAt = new Date().toISOString();
+    const circuitOpen = error instanceof CircuitBreakerError;
+    const status = circuitOpen ? 'Skipped' : 'Failure';
+
+    await recordSourceRun(source, status, 0, Date.now() - start, error.message, startedAt, finishedAt)
+      .catch(recordError => console.error(`${source} health recording failed:`, recordError.message));
+
+    if (!circuitOpen) {
+      await deadLetterQueue.add(
+        source,
+        'source_fetch',
+        { startedAt, retries: cfg.retries },
+        error.message
+      );
+      console.error(`${source} fetch failed after ${cfg.retries + 1} attempts:`, error.message);
+    } else {
+      console.warn(error.message);
     }
+    return [];
   }
-  const finishedAt = new Date().toISOString();
-  recordSourceRun(source, 'Failure', 0, Date.now() - start, lastErr.message, startedAt, finishedAt);
-  console.error(`${source} fetch failed after ${cfg.retries} retries:`, lastErr.message);
-  return [];
 }
 
 async function getDefaultTenant() {
@@ -321,27 +357,18 @@ async function fetchAllSources() {
     // Get default tenant for background writes
     const defaultTenantId = await getDefaultTenant();
 
-    const JOB_TIMEOUT = 60000; // 60s per source max
-    const withTimeout = (name, fn) =>
-      Promise.race([
-        fetchSourceWithHealth(name, fn),
-        new Promise((_, reject) => setTimeout(() => reject(new Error(`${name} timed out`)), JOB_TIMEOUT))
-      ]).catch(err => {
-        console.error(`${name} failed:`, err.message);
-        return [];
-      });
-
-    const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.allSettled([
-      withTimeout('GitHub', () => githubService.fetchGitHubAdvisories()),
-      withTimeout('NVD', () => nvdService.fetchNvdCves()),
-      withTimeout('Red Hat', () => redhatService.fetchRedHatCves()),
-      withTimeout('OTX', () => otxService.fetchOtxPulses()),
-      withTimeout('ThreatFox', () => threatfoxService.fetchThreatFoxIocs()),
-      withTimeout('RSS', () => rssService.fetchRssFeeds()),
-      withTimeout('MISP', () => mispService.fetchMispEvents()),
-      withTimeout('IntelOwl', () => intelOwlService.fetchIntelOwlData()),
-      withTimeout('YARA/Sigma', () => yaraSigmaService.fetchYaraSigmaMatches())
-    ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : []));
+    // fetchSourceWithHealth owns retries, timeouts, circuit state, and failure recording.
+    const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.all([
+      fetchSourceWithHealth('GitHub', () => githubService.fetchGitHubAdvisories()),
+      fetchSourceWithHealth('NVD', () => nvdService.fetchNvdCves()),
+      fetchSourceWithHealth('Red Hat', () => redhatService.fetchRedHatCves()),
+      fetchSourceWithHealth('OTX', () => otxService.fetchOtxPulses()),
+      fetchSourceWithHealth('ThreatFox', () => threatfoxService.fetchThreatFoxIocs()),
+      fetchSourceWithHealth('RSS', () => rssService.fetchRssFeeds()),
+      fetchSourceWithHealth('MISP', () => mispService.fetchMispEvents()),
+      fetchSourceWithHealth('IntelOwl', () => intelOwlService.fetchIntelOwlData()),
+      fetchSourceWithHealth('YARA/Sigma', () => yaraSigmaService.fetchYaraSigmaMatches())
+    ]);
 
     const alerts = [];
 
@@ -649,6 +676,7 @@ app.get('/', (req, res) => {
 
 async function start() {
   await initializeDatabase(db);
+  await deadLetterQueue.initialize();
 
   // Weekly data retention prune (Sunday at 3 AM)
   schedule('0 3 * * 0', async () => {
