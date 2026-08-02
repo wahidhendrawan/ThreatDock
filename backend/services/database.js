@@ -527,7 +527,17 @@ async function seedDefaults(db) {
   const row = await db.get('SELECT COUNT(*) AS count FROM users');
   if (Number(row && row.count) === 0) {
     const adminUser = process.env.AUTH_USER || 'admin';
-    const adminPass = process.env.AUTH_PASSWORD || 'admin';
+    const adminPass = process.env.AUTH_PASSWORD;
+    
+    // P0 Security: Refuse to start with default/placeholder credentials
+    const FORBIDDEN_PASSWORDS = ['admin', 'CHANGE_ME_STRONG_PASSWORD_HERE', 'password', 'threatdock'];
+    if (!adminPass || FORBIDDEN_PASSWORDS.includes(adminPass)) {
+      throw new Error(
+        'FATAL: AUTH_PASSWORD is not set or uses a forbidden placeholder value. ' +
+        'Set a strong password in the AUTH_PASSWORD environment variable before starting.'
+      );
+    }
+    
     const hash = bcrypt.hashSync(adminPass, 10);
     await db.run(
       "INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'Admin')",
