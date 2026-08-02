@@ -118,6 +118,30 @@ describe('CircuitBreaker', () => {
       }).catch(() => {});
 
       expect(circuit.state).toBe(STATES.OPEN);
+      expect(circuit.probeInProgress).toBe(false);
+    });
+
+    it('allows only one concurrent recovery probe', async () => {
+      const circuit = cb.getCircuit('TestSource');
+      circuit.state = STATES.HALF_OPEN;
+      circuit.lastFailure = Date.now() - cb.config.cooldownMs;
+
+      let releaseProbe;
+      const probe = cb.execute('TestSource', () => new Promise(resolve => {
+        releaseProbe = resolve;
+      }));
+
+      await expect(cb.execute('TestSource', async () => 'second probe'))
+        .rejects.toMatchObject({
+          name: 'CircuitBreakerError',
+          code: 'ERR_CIRCUIT_OPEN',
+          reason: 'probe_in_progress'
+        });
+
+      releaseProbe('recovered');
+      await expect(probe).resolves.toBe('recovered');
+      expect(circuit.state).toBe(STATES.CLOSED);
+      expect(circuit.probeInProgress).toBe(false);
     });
   });
 

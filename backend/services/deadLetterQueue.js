@@ -51,7 +51,7 @@ class DeadLetterQueue {
       const errorText = String(errorMessage).slice(0, 2000);
 
       await this.db.query(`
-        INSERT INTO dead_letter_queue 
+        INSERT INTO dead_letter_queue
           (source, item_type, item_data, error_message, attempt_count, first_attempt, last_attempt, status)
         VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'pending')
       `, [source, itemType, dataJson, errorText]);
@@ -69,10 +69,10 @@ class DeadLetterQueue {
    */
   async recordRetry(id, errorMessage) {
     const errorText = String(errorMessage).slice(0, 2000);
-    
+
     await this.db.query(`
       UPDATE dead_letter_queue
-      SET 
+      SET
         attempt_count = attempt_count + 1,
         last_attempt = CURRENT_TIMESTAMP,
         error_message = ?
@@ -89,7 +89,7 @@ class DeadLetterQueue {
   async resolve(id, resolvedBy, notes = '') {
     await this.db.query(`
       UPDATE dead_letter_queue
-      SET 
+      SET
         status = 'resolved',
         resolved_at = CURRENT_TIMESTAMP,
         resolved_by = ?,
@@ -108,7 +108,7 @@ class DeadLetterQueue {
   async markFailed(id, reason) {
     await this.db.query(`
       UPDATE dead_letter_queue
-      SET 
+      SET
         status = 'failed',
         notes = ?
       WHERE id = ?
@@ -123,7 +123,7 @@ class DeadLetterQueue {
    */
   async getPending(source, limit = 100) {
     const result = await this.db.query(`
-      SELECT id, source, item_type, item_data, error_message, attempt_count, 
+      SELECT id, source, item_type, item_data, error_message, attempt_count,
              first_attempt, last_attempt, status
       FROM dead_letter_queue
       WHERE source = ? AND status = 'pending'
@@ -141,7 +141,7 @@ class DeadLetterQueue {
    */
   async getAll(filters = {}) {
     const { source, status, limit = 100 } = filters;
-    
+
     let sql = `
       SELECT id, source, item_type, error_message, attempt_count,
              first_attempt, last_attempt, status, resolved_at, resolved_by
@@ -173,7 +173,7 @@ class DeadLetterQueue {
    */
   async getStats() {
     const result = await this.db.query(`
-      SELECT 
+      SELECT
         source,
         status,
         COUNT(*) as count,

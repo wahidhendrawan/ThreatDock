@@ -1,11 +1,11 @@
 /**
  * Circuit breaker for feed adapters — prevents repeated calls to failing sources.
- * 
+ *
  * States:
  * - CLOSED: Normal operation, requests pass through
  * - OPEN: Source is failing, requests are blocked
  * - HALF_OPEN: Testing if source recovered, limited requests allowed
- * 
+ *
  * Thresholds:
  * - Opens after 3 consecutive failures
  * - Half-open after 5 minutes cooldown
@@ -53,33 +53,41 @@ class CircuitBreaker {
         failures: 0,
         successes: 0,
         lastFailure: null,
-        lastSuccess: null
+        lastSuccess: null,
+        probeInProgress: false
       });
     }
     return this.circuits.get(source);
   }
 
   /**
-   * Check if source is allowed to execute
+   * Reserve execution for a source. Only one recovery probe can run while a
+   * circuit is HALF_OPEN; this prevents a recovered source from being flooded.
    * @param {string} source - Feed source name
-   * @throws {CircuitBreakerError} if circuit is OPEN and cooldown not elapsed
+   * @throws {CircuitBreakerError} if execution is not allowed
    */
-  async checkState(source) {
+  checkState(source) {
     const circuit = this.getCircuit(source);
     const now = Date.now();
 
     if (circuit.state === STATES.OPEN) {
       const cooldownExpired = circuit.lastFailure && (now - circuit.lastFailure) >= this.config.cooldownMs;
-      
-      if (cooldownExpired) {
-        // Attempt half-open: allow one request to test recovery
-        circuit.state = STATES.HALF_OPEN;
-        circuit.successes = 0;
-        console.log(`[CircuitBreaker] ${source}: OPEN → HALF_OPEN (cooldown elapsed)`);
-      } else {
+      if (!cooldownExpired) {
         const nextAttempt = new Date(circuit.lastFailure + this.config.cooldownMs);
         throw new CircuitBreakerError(source, nextAttempt);
       }
+
+      circuit.state = STATES.HALF_OPEN;
+      circuit.successes = 0;
+      console.log(`[CircuitBreaker] ${source}: OPEN → HALF_OPEN (cooldown elapsed)`);
+    }
+
+    if (circuit.state === STATES.HALF_OPEN) {
+      if (circuit.probeInProgress) {
+        const nextAttempt = new Date(circuit.lastFailure + this.config.cooldownMs);
+        throw new CircuitBreakerError(source, nextAttempt, 'probe_in_progress');
+      }
+      circuit.probeInProgress = true;
     }
   }
 
@@ -138,7 +146,7 @@ class CircuitBreaker {
    * @returns {Promise<any>} Result from function
    */
   async execute(source, fn) {
-    await this.checkState(source);
+    this.checkState(source);
 
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
@@ -156,6 +164,7 @@ class CircuitBreaker {
       throw err;
     } finally {
       clearTimeout(timeoutId);
+      this.getCircuit(source).probeInProgress = false;
     }
   }
 
@@ -190,6 +199,7 @@ class CircuitBreaker {
     circuit.state = STATES.CLOSED;
     circuit.failures = 0;
     circuit.successes = 0;
+    circuit.probeInProgress = false;
     console.log(`[CircuitBreaker] ${source}: manually reset to CLOSED`);
   }
 }

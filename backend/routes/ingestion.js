@@ -81,9 +81,9 @@ module.exports = function createIngestionRouter(db, options = {}) {
       if (source) filters.source = source;
       if (status) filters.status = status;
       if (limit) filters.limit = Math.min(parseInt(limit, 10) || 100, 500);
-      
+
       const result = await db.all(
-        `SELECT * FROM dead_letter_queue 
+        `SELECT * FROM dead_letter_queue
          WHERE ($1::text IS NULL OR source = $1)
            AND ($2::text IS NULL OR status = $2)
          ORDER BY last_attempt DESC
@@ -99,9 +99,9 @@ module.exports = function createIngestionRouter(db, options = {}) {
   router.get('/dlq/stats', requireRole('admin'), async (req, res) => {
     try {
       const result = await db.all(
-        `SELECT source, status, COUNT(*) as count 
-         FROM dead_letter_queue 
-         GROUP BY source, status 
+        `SELECT source, status, COUNT(*) as count
+         FROM dead_letter_queue
+         GROUP BY source, status
          ORDER BY source, status`
       );
       return res.json(result);
@@ -115,8 +115,8 @@ module.exports = function createIngestionRouter(db, options = {}) {
     const { notes } = req.body || {};
     try {
       await db.run(
-        `UPDATE dead_letter_queue 
-         SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, resolved_by = $1, notes = $2 
+        `UPDATE dead_letter_queue
+         SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, resolved_by = $1, notes = $2
          WHERE id = $3`,
         [req.user?.email || req.user?.sub || 'admin', notes || '', id]
       );
