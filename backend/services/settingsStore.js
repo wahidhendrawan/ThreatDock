@@ -8,10 +8,35 @@ function isSecretKey(key) {
   return /API_KEY|TOKEN|SECRET|WEBHOOK_URL|PASSWORD/i.test(key);
 }
 
+function resolveKeyMaterial() {
+  if (process.env.SETTINGS_ENCRYPTION_KEY) {
+    return { material: process.env.SETTINGS_ENCRYPTION_KEY, source: 'SETTINGS_ENCRYPTION_KEY' };
+  }
+  if (process.env.JWT_SECRET) {
+    return { material: process.env.JWT_SECRET, source: 'JWT_SECRET' };
+  }
+  return { material: LOCAL_FALLBACK_KEY, source: 'fallback' };
+}
+
+// Warn once if secrets are being protected by the insecure built-in fallback key.
+let fallbackWarned = false;
+function warnIfInsecureKey(source) {
+  if (source === 'fallback' && !fallbackWarned && process.env.NODE_ENV === 'production') {
+    fallbackWarned = true;
+    console.warn(
+      '[settingsStore] SECURITY: neither SETTINGS_ENCRYPTION_KEY nor JWT_SECRET is set. ' +
+      'Stored credentials are encrypted with a public fallback key and are NOT secure. ' +
+      'Set SETTINGS_ENCRYPTION_KEY before storing production secrets.'
+    );
+  }
+}
+
 function encryptionKey() {
+  const { material, source } = resolveKeyMaterial();
+  warnIfInsecureKey(source);
   return crypto
     .createHash('sha256')
-    .update(process.env.SETTINGS_ENCRYPTION_KEY || process.env.JWT_SECRET || LOCAL_FALLBACK_KEY)
+    .update(material)
     .digest();
 }
 
