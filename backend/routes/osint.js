@@ -2,6 +2,8 @@ const express = require('express');
 const { outboundHttp: axios } = require('../services/outboundHttp');
 const settingsStore = require('../services/settingsStore');
 const osintService = require('../services/osint');
+const { requireRole } = require('../services/identity');
+const { auditLog } = require('../services/audit');
 
 function getSettings(db) {
   return settingsStore.getSettings(db);
@@ -20,10 +22,11 @@ function uniqueBy(items, keyFn) {
 module.exports = function createOsintRouter(db) {
   const router = express.Router();
 
-  router.get('/findings', (req, res) => {
+  router.get('/findings', requireRole('viewer'), (req, res) => {
+    const tenantId = req.tenant_id;
     const { category, keyword } = req.query;
-    const conditions = [];
-    const params = [];
+    const conditions = ['tenant_id = ?'];
+    const params = [tenantId];
     if (category) {
       conditions.push('category = ?');
       params.push(category);
@@ -32,8 +35,7 @@ module.exports = function createOsintRouter(db) {
       conditions.push('lower(keyword) LIKE lower(?)');
       params.push(`%${keyword}%`);
     }
-    let query = 'SELECT * FROM osint_findings';
-    if (conditions.length > 0) query += ` WHERE ${conditions.join(' AND ')}`;
+    let query = `SELECT * FROM osint_findings WHERE ${conditions.join(' AND ')}`;
     query += ' ORDER BY created_at DESC LIMIT 500';
     db.all(query, params, (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -41,7 +43,8 @@ module.exports = function createOsintRouter(db) {
     });
   });
 
-  router.post('/digital-risk/search', async (req, res) => {
+  router.post('/digital-risk/search', requireRole('editor'), async (req, res) => {
+    const tenantId = req.tenant_id;
     const keyword = String(req.body.keyword || '').trim();
     if (!keyword) return res.status(400).json({ error: 'Keyword, email, username, or identity is required' });
 
@@ -179,11 +182,11 @@ module.exports = function createOsintRouter(db) {
       db.all(
         `SELECT source, "externalId", title, severity, date, url
          FROM alerts
-         WHERE lower(title) LIKE lower(?) OR lower("externalId") LIKE lower(?)
+         WHERE tenant_id = ? AND (lower(title) LIKE lower(?) OR lower("externalId") LIKE lower(?))
          ORDER BY date DESC
          LIMIT 50`,
-        [`%${keyword}%`, `%${keyword}%`],
-        (err, rows) => {
+        [tenantId, `%${keyword}%`, `%${keyword}%`],
+        async (err, rows) => {
           if (err) return res.status(500).json({ error: err.message });
           rows.forEach(row => results.push({
             provider: row.source,
@@ -196,7 +199,14 @@ module.exports = function createOsintRouter(db) {
           }));
 
           const uniqueResults = uniqueBy(results, item => `${item.provider}:${item.title}:${item.url || ''}`);
-          osintService.saveFindings(db, 'digital-risk', keyword, uniqueResults);
+          osintService.saveFindings(db, tenantId, 'digital-risk', keyword, uniqueResults);
+          await auditLog(db, {
+            tenant_id: tenantId,
+            actor: req.user,
+            event_name: 'osint_digital_risk_search',
+            status: 'success',
+            metadata: { keyword, providers, result_count: uniqueResults.length }
+          });
           res.json({
             keyword,
             providers,
@@ -213,13 +223,21 @@ module.exports = function createOsintRouter(db) {
     }
   });
 
-  router.post('/brand/search', async (req, res) => {
+  router.post('/brand/search', requireRole('editor'), async (req, res) => {
+    const tenantId = req.tenant_id;
     const brand = String(req.body.brand || '').trim();
     if (!brand) return res.status(400).json({ error: 'Brand, domain, or product keyword is required' });
 
     try {
-      const results = await osintService.searchBrandExposure(db, brand);
-      osintService.saveFindings(db, 'brand-exposure', brand, results);
+      const results = await osintService.searchBrandExposure(db, brand, tenantId);
+      osintService.saveFindings(db, tenantId, 'brand-exposure', brand, results);
+      await auditLog(db, {
+        tenant_id: tenantId,
+        actor: req.user,
+        event_name: 'osint_brand_search',
+        status: 'success',
+        metadata: { brand, result_count: results.length }
+      });
       res.json({
         brand,
         results,

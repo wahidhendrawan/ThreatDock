@@ -1,20 +1,14 @@
 const express = require('express');
 const settingsStore = require('../services/settingsStore');
 const dbUtil = require('../services/db');
+const { requireRole } = require('../services/identity');
+const { auditLog } = require('../services/audit');
 
 module.exports = function(db) {
   const router = express.Router();
 
-  // Middleware to ensure user is Admin
-  const requireAdmin = (req, res, next) => {
-    if (req.user && req.user.role === 'Admin') {
-      return next();
-    }
-    return res.status(403).json({ error: 'Requires Admin role' });
-  };
-
   // GET /api/settings
-  router.get('/', async (req, res) => {
+  router.get('/', requireRole('viewer'), async (req, res) => {
     try {
       res.json(await settingsStore.getSettings(db));
     } catch {
@@ -23,7 +17,8 @@ module.exports = function(db) {
   });
 
   // PUT /api/settings
-  router.put('/', requireAdmin, async (req, res) => {
+  router.put('/', requireRole('admin'), async (req, res) => {
+    const tenantId = req.tenant_id;
     const settings = req.body;
     if (!settings || Array.isArray(settings) || typeof settings !== 'object') {
       return res.status(400).json({ error: 'Invalid settings format' });
@@ -69,15 +64,16 @@ module.exports = function(db) {
           await dbUtil.finalize(stmt);
         }
 
-        await dbUtil.run(txDb,
-          `INSERT INTO audit_logs (entity_type, entity_id, user, action, before_value, after_value)
-           VALUES ('settings', 'global', ?, 'update', ?, ?)`,
-          [
-            actor,
-            JSON.stringify(settingsStore.maskSecrets(beforeChanged)),
-            JSON.stringify(settingsStore.maskSecrets(afterChanged))
-          ]
-        );
+        await auditLog(txDb, {
+          tenant_id: tenantId,
+          actor: req.user,
+          event_name: 'settings_updated',
+          status: 'success',
+          metadata: {
+            before: settingsStore.maskSecrets(beforeChanged),
+            after: settingsStore.maskSecrets(afterChanged)
+          }
+        });
       });
 
       res.json({ message: 'Settings updated successfully' });

@@ -34,7 +34,7 @@ function buildHeaders(key, name) {
   return key ? { [name]: key } : {};
 }
 
-async function searchBrandExposure(db, brand) {
+async function searchBrandExposure(db, brand, tenantId) {
   const normalizedDomain = brand.includes('.') ? brand : null;
   const settings = await settingsStore.getSettings(db);
   const results = [];
@@ -136,10 +136,10 @@ async function searchBrandExposure(db, brand) {
     db.all(
       `SELECT source, "externalId", title, severity, date, url
        FROM alerts
-       WHERE lower(title) LIKE lower(?) OR lower(url) LIKE lower(?)
+       WHERE tenant_id = ? AND (lower(title) LIKE lower(?) OR lower(url) LIKE lower(?))
        ORDER BY date DESC
        LIMIT 50`,
-      [`%${brand}%`, `%${brand}%`],
+      [tenantId, `%${brand}%`, `%${brand}%`],
       (err, rows) => {
         if (err) return reject(err);
         rows.forEach(row => results.push({
@@ -159,13 +159,14 @@ async function searchBrandExposure(db, brand) {
   });
 }
 
-function saveFindings(db, category, keyword, results) {
+function saveFindings(db, tenantId, category, keyword, results) {
   const stmt = db.prepare(`
-    INSERT INTO osint_findings (category, keyword, provider, type, title, severity, date, url, description, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO osint_findings (tenant_id, category, keyword, provider, type, title, severity, date, url, description, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   results.slice(0, 200).forEach(item => {
     stmt.run(
+      tenantId,
       category,
       keyword,
       item.provider || '',
