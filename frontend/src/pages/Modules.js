@@ -1906,6 +1906,8 @@ export function IntelOperations({ authData }) {
   const [indicators, setIndicators] = useState([]);
   const [correlations, setCorrelations] = useState([]);
   const [audit, setAudit] = useState([]);
+  const [dlq, setDlq] = useState([]);
+  const [dlqStats, setDlqStats] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const [indicatorsCount, setIndicatorsCount] = useState(0);
@@ -1918,19 +1920,23 @@ export function IntelOperations({ authData }) {
   const loadOperations = async () => {
     setLoading(true);
     try {
-      const [healthRes, runsRes, indicatorsRes, correlationsRes, auditRes, statsRes] = await Promise.all([
+      const [healthRes, runsRes, indicatorsRes, correlationsRes, auditRes, statsRes, dlqRes, dlqStatsRes] = await Promise.all([
         fetch('/api/ingestion/health', { headers }),
         fetch('/api/ingestion/runs?limit=100', { headers }),
         fetch('/api/intelligence/indicators', { headers }),
         fetch('/api/intelligence/correlations', { headers }),
         fetch('/api/ingestion/audit?limit=100', { headers }),
-        fetch('/api/intelligence/stats', { headers })
+        fetch('/api/intelligence/stats', { headers }),
+        fetch('/api/ingestion/dlq?limit=100', { headers }),
+        fetch('/api/ingestion/dlq/stats', { headers })
       ]);
       if (healthRes.ok) setHealth(await healthRes.json());
       if (runsRes.ok) setRuns(await runsRes.json());
       if (indicatorsRes.ok) setIndicators(await indicatorsRes.json());
       if (correlationsRes.ok) setCorrelations(await correlationsRes.json());
       if (auditRes.ok) setAudit(await auditRes.json());
+      if (dlqRes.ok) setDlq(await dlqRes.json());
+      if (dlqStatsRes.ok) setDlqStats(await dlqStatsRes.json());
       if (statsRes.ok) {
         const stats = await statsRes.json();
         setIndicatorsCount(stats.indicators || 0);
@@ -1976,6 +1982,42 @@ export function IntelOperations({ authData }) {
     loadOperations();
   };
 
+  const handleDlqRetry = async (id) => {
+    try {
+      const res = await fetch(`/api/ingestion/dlq/${id}/retry`, { method: 'POST', headers });
+      if (res.ok) {
+        alert('DLQ item scheduled for immediate retry');
+        loadOperations();
+      } else {
+        alert('Failed to schedule retry');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Network error');
+    }
+  };
+
+  const handleDlqResolve = async (id) => {
+    const notes = prompt('Enter resolution notes (optional):');
+    if (notes === null) return;
+    try {
+      const res = await fetch(`/api/ingestion/dlq/${id}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ notes })
+      });
+      if (res.ok) {
+        alert('DLQ item resolved');
+        loadOperations();
+      } else {
+        alert('Failed to resolve');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Network error');
+    }
+  };
+
   const parseList = (value) => {
     try {
       const parsed = JSON.parse(value || '[]');
@@ -1987,6 +2029,8 @@ export function IntelOperations({ authData }) {
 
   const successCount = health.filter(item => item.status === 'Success').length;
   const failureCount = health.filter(item => item.status === 'Failure').length;
+  const dlqPendingCount = dlqStats.filter(s => s.status === 'pending').reduce((sum, s) => sum + parseInt(s.count || 0), 0);
+  const dlqFailedCount = dlqStats.filter(s => s.status === 'failed').reduce((sum, s) => sum + parseInt(s.count || 0), 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -2016,6 +2060,8 @@ export function IntelOperations({ authData }) {
         <div className="card metric-card"><div className="metric-label">Sources Failing</div><div className="metric-value" style={{ color: failureCount ? '#f87171' : '#34d399' }}>{failureCount}</div></div>
         <div className="card metric-card"><div className="metric-label">Indicators</div><div className="metric-value">{indicatorsCount.toLocaleString()}</div></div>
         <div className="card metric-card"><div className="metric-label">Correlations</div><div className="metric-value">{correlationsCount.toLocaleString()}</div></div>
+        <div className="card metric-card"><div className="metric-label">DLQ Pending</div><div className="metric-value" style={{ color: dlqPendingCount ? '#f59e0b' : '#34d399' }}>{dlqPendingCount}</div></div>
+        <div className="card metric-card"><div className="metric-label">DLQ Failed</div><div className="metric-value" style={{ color: dlqFailedCount ? '#f87171' : '#34d399' }}>{dlqFailedCount}</div></div>
       </div>
 
       <div className="card">
@@ -2101,6 +2147,49 @@ export function IntelOperations({ authData }) {
       </div>
 
       <div className="card">
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Dead Letter Queue</h2>
+        <PaginatedTable
+          items={dlq}
+          headers={['Source', 'Type', 'Status', 'Attempts', 'Next Attempt', 'Error', 'Actions']}
+          renderRow={(item) => (
+            <tr key={item.id}>
+              <td style={{ fontWeight: 600 }}>{item.source}</td>
+              <td>{item.item_type || '-'}</td>
+              <td><span className={`severity-badge severity-${item.status === 'resolved' ? 'Low' : item.status === 'failed' ? 'Critical' : 'Medium'}`}>{item.status}</span></td>
+              <td>{item.attempt_count}</td>
+              <td>{item.next_attempt_at ? new Date(item.next_attempt_at).toLocaleString() : '-'}</td>
+              <td style={{ maxWidth: 260, color: 'var(--danger)' }}>{item.error_message || '-'}</td>
+              <td>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  {item.status !== 'resolved' && (
+                    <button
+                      className="btn btn-outline"
+                      style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                      onClick={() => handleDlqRetry(item.id)}
+                      title="Retry now"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  {item.status !== 'resolved' && (
+                    <button
+                      className="btn btn-outline"
+                      style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                      onClick={() => handleDlqResolve(item.id)}
+                      title="Mark resolved"
+                    >
+                      Resolve
+                    </button>
+                  )}
+                </div>
+              </td>
+            </tr>
+          )}
+          initialPageSize={25}
+        />
+      </div>
+
+      <div className="card">
         <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Audit Log</h2>
         <PaginatedTable
           items={audit}
@@ -2116,6 +2205,295 @@ export function IntelOperations({ authData }) {
           initialPageSize={25}
         />
       </div>
+    </div>
+  );
+}
+
+// ============ System Status ============
+export function SystemStatus({ authData }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState(null);
+
+  const headers = getAuthHeaders(authData);
+
+  const loadStatus = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/status', { headers });
+      if (res.ok) {
+        setStatus(await res.json());
+        setLastRefresh(new Date().toLocaleTimeString());
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadStatus();
+    const interval = setInterval(loadStatus, 30000); // Auto-refresh every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading && !status) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="page-header">
+          <h1 className="page-title">System Status</h1>
+        </div>
+        <div className="card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+          Loading system health...
+        </div>
+      </div>
+    );
+  }
+
+  if (!status) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="page-header">
+          <h1 className="page-title">System Status</h1>
+        </div>
+        <div className="card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--danger)' }}>
+          Failed to load system status.
+        </div>
+      </div>
+    );
+  }
+
+  const overallHealthy = status.status === 'healthy';
+  const dbHealthy = status.checks?.database?.status === 'healthy';
+  const cacheHealthy = status.checks?.cache?.status === 'healthy';
+  const cbHealthy = status.checks?.circuit_breakers?.status === 'healthy';
+  const dlqHealthy = status.checks?.dead_letter_queue?.status === 'healthy';
+  const memHealthy = status.checks?.memory?.status === 'healthy';
+
+  const formatBytes = (bytes) => {
+    if (!bytes) return '0 B';
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(1)} MB`;
+  };
+
+  const formatUptime = (seconds) => {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">System Status</h1>
+          <p className="page-subtitle">Real-time health monitoring for database, cache, circuit breakers, DLQ, and memory.</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          {lastRefresh && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              Last refresh: {lastRefresh}
+            </span>
+          )}
+          <button className="btn btn-outline" onClick={loadStatus} disabled={loading}>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Overall Status Banner */}
+      <div className="card" style={{ 
+        padding: '1.5rem', 
+        background: overallHealthy ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+        borderLeft: `4px solid ${overallHealthy ? '#10b981' : '#ef4444'}`
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+          <div>
+            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+              Overall System Status
+            </div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 800, color: overallHealthy ? '#10b981' : '#ef4444' }}>
+              {overallHealthy ? 'All Systems Operational' : 'Degraded Performance'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '2rem', fontSize: '0.85rem' }}>
+            <div>
+              <span style={{ color: 'var(--text-muted)' }}>Uptime:</span>{' '}
+              <strong>{formatUptime(status.uptime_seconds || 0)}</strong>
+            </div>
+            <div>
+              <span style={{ color: 'var(--text-muted)' }}>Service:</span>{' '}
+              <strong>{status.service || 'threatdock-backend'}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Health Checks Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+        {/* Database */}
+        <div className="card" style={{ borderLeft: `4px solid ${dbHealthy ? '#10b981' : '#ef4444'}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Database</h3>
+            <span className={`severity-badge severity-${dbHealthy ? 'Low' : 'Critical'}`} style={{ fontSize: '0.65rem' }}>
+              {status.checks?.database?.status || 'unknown'}
+            </span>
+          </div>
+          {status.checks?.database?.error ? (
+            <div style={{ fontSize: '0.8rem', color: 'var(--danger)' }}>
+              {status.checks.database.error}
+            </div>
+          ) : (
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              PostgreSQL connection healthy
+            </div>
+          )}
+        </div>
+
+        {/* Cache */}
+        <div className="card" style={{ borderLeft: `4px solid ${cacheHealthy ? '#10b981' : '#ef4444'}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Cache</h3>
+            <span className={`severity-badge severity-${cacheHealthy ? 'Low' : 'Critical'}`} style={{ fontSize: '0.65rem' }}>
+              {status.checks?.cache?.status || 'unknown'}
+            </span>
+          </div>
+          <div style={{ fontSize: '0.8rem' }}>
+            <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+              Backend: <strong>{status.checks?.cache?.backend || 'unknown'}</strong>
+            </div>
+            {status.checks?.cache?.backend === 'memory' && (
+              <div style={{ color: 'var(--text-muted)' }}>
+                Entries: <strong>{status.checks.cache.memory_entries || 0}</strong>
+              </div>
+            )}
+            {status.checks?.cache?.redis_ready && (
+              <div style={{ color: '#10b981', fontSize: '0.75rem' }}>✓ Redis connected</div>
+            )}
+          </div>
+        </div>
+
+        {/* Circuit Breakers */}
+        <div className="card" style={{ borderLeft: `4px solid ${cbHealthy ? '#10b981' : '#f59e0b'}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Circuit Breakers</h3>
+            <span className={`severity-badge severity-${cbHealthy ? 'Low' : 'Medium'}`} style={{ fontSize: '0.65rem' }}>
+              {status.checks?.circuit_breakers?.status || 'unknown'}
+            </span>
+          </div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            Open circuits: <strong style={{ color: status.checks?.circuit_breakers?.open_circuits > 0 ? '#f59e0b' : '#10b981' }}>
+              {status.checks?.circuit_breakers?.open_circuits || 0}
+            </strong>
+          </div>
+        </div>
+
+        {/* DLQ */}
+        <div className="card" style={{ borderLeft: `4px solid ${dlqHealthy ? '#10b981' : '#f59e0b'}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Dead Letter Queue</h3>
+            <span className={`severity-badge severity-${dlqHealthy ? 'Low' : 'Medium'}`} style={{ fontSize: '0.65rem' }}>
+              {status.checks?.dead_letter_queue?.status || 'unknown'}
+            </span>
+          </div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            Pending: <strong style={{ color: status.checks?.dead_letter_queue?.pending > 50 ? '#f59e0b' : '#10b981' }}>
+              {status.checks?.dead_letter_queue?.pending || 0}
+            </strong>
+          </div>
+        </div>
+
+        {/* Memory */}
+        <div className="card" style={{ borderLeft: `4px solid ${memHealthy ? '#10b981' : '#f59e0b'}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Memory</h3>
+            <span className={`severity-badge severity-${memHealthy ? 'Low' : 'Medium'}`} style={{ fontSize: '0.65rem' }}>
+              {status.checks?.memory?.status || 'unknown'}
+            </span>
+          </div>
+          <div style={{ fontSize: '0.8rem' }}>
+            <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+              RSS: <strong>{formatBytes(status.checks?.memory?.rss_bytes)}</strong>
+            </div>
+            <div style={{ color: 'var(--text-muted)' }}>
+              Heap: <strong>{formatBytes(status.checks?.memory?.heap_used_bytes)}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Circuit Breaker Details */}
+      {status.checks?.circuit_breakers?.sources && status.checks.circuit_breakers.sources.length > 0 && (
+        <div className="card">
+          <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>
+            Circuit Breaker Status by Source
+          </h2>
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>State</th>
+                  <th>Failures</th>
+                  <th>Last Failure</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.checks.circuit_breakers.sources.map(cb => (
+                  <tr key={cb.source}>
+                    <td style={{ fontWeight: 600 }}>{cb.source}</td>
+                    <td>
+                      <span className={`severity-badge severity-${cb.state === 'CLOSED' ? 'Low' : cb.state === 'HALF_OPEN' ? 'Medium' : 'High'}`}>
+                        {cb.state}
+                      </span>
+                    </td>
+                    <td style={{ color: cb.failures > 0 ? '#f59e0b' : 'var(--text-muted)' }}>{cb.failures}</td>
+                    <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      {cb.last_failure_time ? new Date(cb.last_failure_time).toLocaleString() : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* DLQ Details */}
+      {status.checks?.dead_letter_queue?.by_source && status.checks.dead_letter_queue.by_source.length > 0 && (
+        <div className="card">
+          <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '1rem' }}>
+            DLQ Status by Source
+          </h2>
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Status</th>
+                  <th>Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.checks.dead_letter_queue.by_source.map((row, i) => (
+                  <tr key={`${row.source}-${row.status}-${i}`}>
+                    <td style={{ fontWeight: 600 }}>{row.source}</td>
+                    <td>
+                      <span className={`severity-badge severity-${row.status === 'resolved' ? 'Low' : row.status === 'failed' ? 'Critical' : 'Medium'}`}>
+                        {row.status}
+                      </span>
+                    </td>
+                    <td>{row.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

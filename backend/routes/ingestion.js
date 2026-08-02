@@ -4,7 +4,7 @@ const { auditLog } = require('../services/audit');
 const { circuitBreaker } = require('../services/circuitBreaker');
 
 module.exports = function createIngestionRouter(db, options = {}) {
-  const { fetchAllSources } = options;
+  const { fetchAllSources, deadLetterQueue: dlq } = options;
   const router = express.Router();
 
   // Source health and ingestion runs are global operational data, but require
@@ -131,6 +131,44 @@ module.exports = function createIngestionRouter(db, options = {}) {
       return res.json({ message: `DLQ item ${id} resolved` });
     } catch (err) {
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/dlq/:id/retry', requireRole('admin'), async (req, res) => {
+    const { id } = req.params;
+    if (!dlq || !fetchAllSources) {
+      return res.status(503).json({ error: 'DLQ or fetch service not available.' });
+    }
+
+    try {
+      const item = await dlq.claimById(id);
+      if (!item) {
+        return res.status(404).json({ error: 'DLQ item not found, already resolved, or currently being processed.' });
+      }
+
+      auditLog(db, {
+        tenant_id: req.tenant_id, actor: req.user, event_name: 'dlq_item_retry_started',
+        entity_type: 'dlq', entity_id: id, status: 'success'
+      }).catch(() => {});
+
+      // Asynchronously trigger the fetch for the specific source.
+      // This provides immediate feedback to the UI. The actual success/failure
+      // will be handled by the background worker.
+      fetchAllSources({ specificSource: item.source })
+        .then(() => {
+          console.log(`[DLQ] Manual retry for item ${id} (source: ${item.source}) completed.`);
+          // The worker is responsible for resolving the item now.
+        })
+        .catch(err => {
+          console.error(`[DLQ] Manual retry for item ${id} failed unexpectedly:`, err);
+          // If the worker fails, we must release the claim so it can be picked up again.
+          dlq.releaseClaim(id, `Manual retry failed: ${err.message}`).catch(() => {});
+        });
+
+      return res.json({ message: `DLQ item ${id} (source: ${item.source}) replay started.` });
+    } catch (err) {
+      console.error(`[DLQ] Retry logic for item ${id} failed:`, err);
+      return res.status(500).json({ error: 'Failed to initiate DLQ retry.' });
     }
   });
 

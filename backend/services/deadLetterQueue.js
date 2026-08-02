@@ -163,6 +163,38 @@ class DeadLetterQueue {
     return result.rows || [];
   }
 
+  /** Claim a specific non-resolved item for an operator-requested replay. */
+  async claimById(id) {
+    const result = await this.db.query(`
+      UPDATE dead_letter_queue
+      SET status = 'processing', last_attempt = CURRENT_TIMESTAMP
+      WHERE id = ? AND status IN ('pending', 'failed')
+      RETURNING id, source, item_type, item_data, error_message, attempt_count,
+                first_attempt, last_attempt, next_attempt_at, status
+    `, [id]);
+    return result.rows?.[0] || null;
+  }
+
+  /** Release a claimed item without consuming a retry when a worker is busy. */
+  async releaseClaim(id, note = 'Replay deferred because another ingestion run is active.') {
+    await this.db.query(`
+      UPDATE dead_letter_queue
+      SET status = 'pending', next_attempt_at = CURRENT_TIMESTAMP, notes = ?
+      WHERE id = ? AND status = 'processing'
+    `, [String(note).slice(0, 2000), id]);
+  }
+
+  /** Mark a replayed item as resolved, keeping history and removing from retry queue. */
+  async succeed(id, resolvedBy = 'automatic-retry') {
+    await this.db.query(`
+      UPDATE dead_letter_queue
+      SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, resolved_by = ?,
+          next_attempt_at = NULL, notes = COALESCE(notes, '') || ' Successfully replayed.'
+      WHERE id = ? AND status = 'processing'
+    `, [resolvedBy, id]);
+    console.log(`[DLQ] Item ${id} successfully replayed and resolved by ${resolvedBy}.`);
+  }
+
   /** Requeue claims left by a crashed worker after the safety timeout. */
   async recoverStaleProcessing(minutes = 15) {
     const result = await this.db.query(`

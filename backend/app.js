@@ -224,7 +224,7 @@ const RETRY_CONFIGS = {
   default: { retries: 1, baseDelay: 1000 }
 };
 
-async function fetchSourceWithHealth(source, fetcher) {
+async function fetchSourceWithHealth(source, fetcher, { throwOnFailure = false, captureDlq = true } = {}) {
   const startedAt = new Date().toISOString();
   const start = Date.now();
   const cfg = RETRY_CONFIGS[source] || RETRY_CONFIGS.default;
@@ -270,17 +270,18 @@ async function fetchSourceWithHealth(source, fetcher) {
     await recordSourceRun(source, status, 0, Date.now() - start, error.message, startedAt, finishedAt)
       .catch(recordError => console.error(`${source} health recording failed:`, recordError.message));
 
-    if (!circuitOpen) {
+    if (!circuitOpen && captureDlq) {
       await deadLetterQueue.add(
         source,
         'source_fetch',
         { startedAt, retries: cfg.retries },
         error.message
       );
-      console.error(`${source} fetch failed after ${cfg.retries + 1} attempts:`, error.message);
-    } else {
-      console.warn(error.message);
     }
+    if (circuitOpen) console.warn(error.message);
+    else console.error(`${source} fetch failed after ${cfg.retries + 1} attempts:`, error.message);
+
+    if (throwOnFailure) throw error;
     return [];
   }
 }
@@ -343,10 +344,16 @@ const FETCH_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes safety timeout
 
 /**
  * Fetch data from all configured sources and store in PostgreSQL.
+ * @param {Object} options - Optional parameters
+ * @param {string} options.specificSource - If set, fetch only this source (for DLQ retries)
+ * @param {boolean} options.isRetry - If true, this is a DLQ retry attempt
+ * @param {number} options.dlqItemId - The DLQ item ID being retried (if isRetry)
  */
-async function fetchAllSources() {
+async function fetchAllSources(options = {}) {
+  const { specificSource, isRetry, dlqItemId } = options;
+
   // Safety: reset if stuck longer than FETCH_TIMEOUT_MS
-  if (fetchAllSourcesRunning) {
+  if (fetchAllSourcesRunning && !isRetry) {
     if (Date.now() - fetchStartedAt > FETCH_TIMEOUT_MS) {
       console.warn('Previous fetch timed out. Resetting lock.');
       fetchAllSourcesRunning = false;
@@ -356,28 +363,107 @@ async function fetchAllSources() {
     }
   }
 
-  fetchAllSourcesRunning = true;
-  fetchStartedAt = Date.now();
+  if (!isRetry) {
+    fetchAllSourcesRunning = true;
+    fetchStartedAt = Date.now();
+  }
+
   try {
     await applyRuntimeSettings();
 
     // Get default tenant for background writes
     const defaultTenantId = await getDefaultTenant();
 
-    // fetchSourceWithHealth owns retries, timeouts, circuit state, and failure recording.
-    const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.all([
-      fetchSourceWithHealth('GitHub', () => githubService.fetchGitHubAdvisories()),
-      fetchSourceWithHealth('NVD', () => nvdService.fetchNvdCves()),
-      fetchSourceWithHealth('Red Hat', () => redhatService.fetchRedHatCves()),
-      fetchSourceWithHealth('OTX', () => otxService.fetchOtxPulses()),
-      fetchSourceWithHealth('ThreatFox', () => threatfoxService.fetchThreatFoxIocs()),
-      fetchSourceWithHealth('RSS', () => rssService.fetchRssFeeds()),
-      fetchSourceWithHealth('MISP', () => mispService.fetchMispEvents()),
-      fetchSourceWithHealth('IntelOwl', () => intelOwlService.fetchIntelOwlData()),
-      fetchSourceWithHealth('YARA/Sigma', () => yaraSigmaService.fetchYaraSigmaMatches())
-    ]);
+    // If specificSource is set, fetch only that source.
+    let allData = {};
+    if (specificSource) {
+      console.log(`[fetchAllSources] Fetching specific source: ${specificSource}`);
+      let fetcher;
+      switch (specificSource) {
+        case 'GitHub':
+          fetcher = () => githubService.fetchGitHubAdvisories();
+          break;
+        case 'NVD':
+          fetcher = () => nvdService.fetchNvdCves();
+          break;
+        case 'Red Hat':
+          fetcher = () => redhatService.fetchRedHatCves();
+          break;
+        case 'OTX':
+          fetcher = () => otxService.fetchOtxPulses();
+          break;
+        case 'ThreatFox':
+          fetcher = () => threatfoxService.fetchThreatFoxIocs();
+          break;
+        case 'RSS':
+          fetcher = () => rssService.fetchRssFeeds();
+          break;
+        case 'MISP':
+          fetcher = () => mispService.fetchMispEvents();
+          break;
+        case 'IntelOwl':
+          fetcher = () => intelOwlService.fetchIntelOwlData();
+          break;
+        case 'YARA/Sigma':
+          fetcher = () => yaraSigmaService.fetchYaraSigmaMatches();
+          break;
+        default: {
+          const unknownSourceError = `Unknown source: ${specificSource}`;
+          console.error(`[fetchAllSources] ${unknownSourceError}`);
+          if (isRetry && dlqItemId) {
+            await deadLetterQueue.markFailed(dlqItemId, unknownSourceError);
+          }
+          return false;
+        }
+      }
+
+      try {
+        const data = await fetchSourceWithHealth(specificSource, fetcher, {
+          // A retry must reject on fetch failure so the DLQ item is not
+          // incorrectly treated as successful when the helper returns [].
+          throwOnFailure: true,
+          captureDlq: false
+        });
+        allData[specificSource] = data;
+
+        // An empty result is still a successful fetch; sources may legitimately
+        // have no new records. Resolve the claimed item only after the fetch
+        // and subsequent alert processing complete successfully.
+      } catch (specificErr) {
+        console.error(`[fetchAllSources] Failed to fetch ${specificSource}:`, specificErr.message);
+        if (isRetry && dlqItemId) {
+          await deadLetterQueue.recordRetry(dlqItemId, specificErr.message);
+        }
+        return false;
+      }
+    } else {
+      // Fetch all sources in parallel.
+      const [ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData] = await Promise.all([
+        fetchSourceWithHealth('GitHub', () => githubService.fetchGitHubAdvisories()),
+        fetchSourceWithHealth('NVD', () => nvdService.fetchNvdCves()),
+        fetchSourceWithHealth('Red Hat', () => redhatService.fetchRedHatCves()),
+        fetchSourceWithHealth('OTX', () => otxService.fetchOtxPulses()),
+        fetchSourceWithHealth('ThreatFox', () => threatfoxService.fetchThreatFoxIocs()),
+        fetchSourceWithHealth('RSS', () => rssService.fetchRssFeeds()),
+        fetchSourceWithHealth('MISP', () => mispService.fetchMispEvents()),
+        fetchSourceWithHealth('IntelOwl', () => intelOwlService.fetchIntelOwlData()),
+        fetchSourceWithHealth('YARA/Sigma', () => yaraSigmaService.fetchYaraSigmaMatches())
+      ]);
+      allData = { ghData, nvdData, rhData, otxData, tfData, rssData, mispData, intelData, yaraData };
+    }
 
     const alerts = [];
+
+    // Extract individual source data from allData
+    const ghData = allData.GitHub || allData.ghData || [];
+    const nvdData = allData.NVD || allData.nvdData;
+    const rhData = allData['Red Hat'] || allData.rhData || [];
+    const otxData = allData.OTX || allData.otxData || [];
+    const tfData = allData.ThreatFox || allData.tfData || [];
+    const rssData = allData.RSS || allData.rssData || [];
+    const mispData = allData.MISP || allData.mispData || [];
+    const intelData = allData.IntelOwl || allData.intelData || [];
+    const yaraData = allData['YARA/Sigma'] || allData.yaraData || [];
 
     // Process GitHub advisories
     if (Array.isArray(ghData)) {
@@ -611,11 +697,24 @@ async function fetchAllSources() {
     } catch (notifyErr) {
       console.error('Error sending notifications:', notifyErr.message);
     }
+
+    if (isRetry && dlqItemId) {
+      await deadLetterQueue.succeed(dlqItemId, 'automatic-retry');
+    }
+    return true;
   } catch (err) {
     console.error('Error fetching alerts:', err);
+    if (isRetry && dlqItemId) {
+      await deadLetterQueue.recordRetry(dlqItemId, err.message).catch(retryErr => {
+        console.error(`[DLQ Retry] Unable to reschedule item ${dlqItemId}:`, retryErr.message);
+      });
+    }
+    return false;
   } finally {
-    fetchAllSourcesRunning = false;
-    io.emit('fetch:complete');
+    if (!isRetry) {
+      fetchAllSourcesRunning = false;
+      io.emit('fetch:complete');
+    }
   }
 }
 
@@ -672,7 +771,7 @@ mountApi('/hunt', apiLimiter, authMiddleware, huntRouter);
 const osintRouter = require('./routes/osint')(db);
 mountApi('/osint', apiLimiter, authMiddleware, osintRouter);
 
-const ingestionRouter = require('./routes/ingestion')(db, { fetchAllSources });
+const ingestionRouter = require('./routes/ingestion')(db, { fetchAllSources, deadLetterQueue });
 mountApi('/ingestion', apiLimiter, authMiddleware, ingestionRouter);
 
 // Swagger API docs
@@ -819,23 +918,38 @@ async function start() {
 
   // DLQ retry processing every 5 minutes
   schedule('*/5 * * * *', async () => {
+    let claimedItems = [];
     try {
-      const readyItems = await deadLetterQueue.getReadyForRetry(20);
-      if (readyItems.length === 0) return;
-      
-      console.log(`[DLQ Retry] Processing ${readyItems.length} ready items...`);
-      for (const item of readyItems) {
+      // Atomically claim items that are ready for a retry attempt.
+      claimedItems = await deadLetterQueue.claimReadyForRetry(20);
+      if (claimedItems.length === 0) return;
+
+      console.log(`[DLQ Retry] Processing ${claimedItems.length} ready items...`);
+
+      // Process each claimed item.
+      for (const item of claimedItems) {
+        console.log(`[DLQ Retry] Replaying item ${item.id} for source: ${item.source} (attempt ${item.attempt_count + 1})`);
         try {
-          // For now, log and mark as retried. Full replay requires worker integration.
-          console.log(`[DLQ Retry] Item ${item.id} from ${item.source} (attempt ${item.attempt_count + 1})`);
-          // Future: dispatch to appropriate worker/handler based on item.source and item.item_type
-          // await deadLetterQueue.recordRetry(item.id, 'Retry not yet implemented');
-        } catch (retryErr) {
-          await deadLetterQueue.recordRetry(item.id, retryErr.message);
+          // Re-trigger the fetch for the specific source.
+          // fetchSourceWithHealth will handle the underlying success/failure recording.
+          // On success, the DLQ item is removed internally.
+          // On failure, the next attempt time is updated with backoff.
+          await fetchAllSources({ specificSource: item.source, isRetry: true, dlqItemId: item.id });
+        } catch (replayErr) {
+          // If fetchAllSources itself throws (which it shouldn't unless something is very wrong),
+          // release the claim so it can be picked up again later.
+          console.error(`[DLQ Retry] Catastrophic failure replaying item ${item.id}. Releasing claim. Error: ${replayErr.message}`);
+          await deadLetterQueue.releaseClaim(item.id, `Replay trigger failed: ${replayErr.message}`);
         }
       }
     } catch (err) {
-      console.error('DLQ retry processing failed:', err.message);
+      console.error('DLQ retry scheduler failed:', err.message);
+      // If we failed to process, release any claims we might have held.
+      if (claimedItems.length > 0) {
+        for (const item of claimedItems) {
+          await deadLetterQueue.releaseClaim(item.id, 'Scheduler failed before processing').catch(() => {});
+        }
+      }
     }
   }, { name: 'dlq-retry' });
 

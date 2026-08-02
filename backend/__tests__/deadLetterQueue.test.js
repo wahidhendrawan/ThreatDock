@@ -89,10 +89,16 @@ describe('DeadLetterQueue', () => {
     it('increments attempt_count and updates last_attempt', async () => {
       await dlq.recordRetry(42, 'still failing');
 
-      const updateCall = db.calls.find(c => /UPDATE dead_letter_queue/.test(c.sql) && /attempt_count = attempt_count \+ 1/.test(c.sql));
+      // Expect a SELECT to fetch current attempt_count
+      const selectCall = db.calls.find(c => /SELECT attempt_count FROM dead_letter_queue/.test(c.sql));
+      expect(selectCall).toBeTruthy();
+      expect(selectCall.params).toContain(42);
+
+      // Expect an UPDATE with the computed next attempt count
+      const updateCall = db.calls.find(c => /UPDATE dead_letter_queue/.test(c.sql) && /attempt_count = \?/.test(c.sql));
       expect(updateCall).toBeTruthy();
       expect(updateCall.params).toContain('still failing');
-      expect(updateCall.params).toContain(42);
+      expect(updateCall.params[0]).toBe(2); // attempt_count incremented from 1 to 2
     });
   });
 
