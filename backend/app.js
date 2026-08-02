@@ -25,6 +25,7 @@ const { JobQueue } = require('./services/queue');
 const { runRebuildCorrelations } = require('./services/worker');
 const { circuitBreaker, CircuitBreakerError } = require('./services/circuitBreaker');
 const { DeadLetterQueue } = require('./services/deadLetterQueue');
+const { pruneOldAuditLogs } = require('./services/audit');
 
 const authMiddleware = require('./middleware/auth');
 const rateLimit = require('./middleware/rateLimit');
@@ -619,36 +620,60 @@ async function fetchAllSources() {
 }
 
 // Apply rate limiters
-const apiLimiter = rateLimit({ windowMs: 60000, max: 600, message: 'API rate limit exceeded (600/min)' });
-const authLimiter = rateLimit({ windowMs: 60000, max: 120, message: 'Auth rate limit exceeded (120/min)' });
+const apiLimiter = rateLimit({
+  windowMs: 60000,
+  max: 600,
+  message: 'API rate limit exceeded (600/min)',
+  // tenant-aware limiting will be applied after auth middleware where req.user is available
+});
+
+const authLimiter = rateLimit({
+  windowMs: 60000,
+  max: 120,
+  message: 'Auth rate limit exceeded (120/min)'
+});
+
+// API version middleware - adds X-API-Version header for observability
+const apiVersionHeader = (version) => (req, res, next) => {
+  res.setHeader('X-API-Version', version);
+  req.apiVersion = version;
+  next();
+};
+
+// Helper: mount a router at both legacy /api/<path> and versioned /api/v1/<path>
+const mountApi = (path, ...middlewares) => {
+  app.use(`/api${path}`, apiVersionHeader('legacy'), ...middlewares);
+  app.use(`/api/v1${path}`, apiVersionHeader('v1'), ...middlewares);
+};
 
 // Mount alerts router
 const alertsRouter = require('./routes/alerts')(db);
-app.use('/api/alerts', apiLimiter, authMiddleware, alertsRouter);
+mountApi('/alerts', apiLimiter, authMiddleware, alertsRouter);
 
 // Mount Auth router (Unprotected)
 const authRouter = require('./routes/auth');
 app.use('/auth', authLimiter, authRouter);
+app.use('/api/v1/auth', authLimiter, apiVersionHeader('v1'), authRouter);
 
 // Mount API routers
 const assetsRouter = require('./routes/assets')(db);
-app.use('/api/assets', apiLimiter, authMiddleware, assetsRouter);
+mountApi('/assets', apiLimiter, authMiddleware, assetsRouter);
 
 const vendorsRouter = require('./routes/vendors')(db);
-app.use('/api/vendors', apiLimiter, authMiddleware, vendorsRouter);
+mountApi('/vendors', apiLimiter, authMiddleware, vendorsRouter);
 
 const dnsImpersonationRouter = require('./routes/dns_impersonation')(db);
-app.use('/api/dns-impersonation', apiLimiter, authMiddleware, dnsImpersonationRouter);
-app.use('/api/dns_impersonation', apiLimiter, authMiddleware, dnsImpersonationRouter);
+mountApi('/dns-impersonation', apiLimiter, authMiddleware, dnsImpersonationRouter);
+mountApi('/dns_impersonation', apiLimiter, authMiddleware, dnsImpersonationRouter);
 
 const huntRouter = require('./routes/threatHunting')(db);
-app.use('/api/hunt', apiLimiter, authMiddleware, huntRouter);
+mountApi('/hunt', apiLimiter, authMiddleware, huntRouter);
 
 const osintRouter = require('./routes/osint')(db);
-app.use('/api/osint', apiLimiter, authMiddleware, osintRouter);
+mountApi('/osint', apiLimiter, authMiddleware, osintRouter);
 
 const ingestionRouter = require('./routes/ingestion')(db, { fetchAllSources });
-app.use('/api/ingestion', apiLimiter, authMiddleware, ingestionRouter);
+mountApi('/ingestion', apiLimiter, authMiddleware, ingestionRouter);
 
 // Swagger API docs
 const swaggerSpec = require('./services/swagger');
@@ -658,22 +683,37 @@ app.get('/api/docs', (req, res) => {
   res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>ThreatDock API Docs</title><link rel="stylesheet" href="/swagger/swagger-ui.css"></head><body><div id="swagger-ui"></div><script src="/swagger/swagger-ui-bundle.js"></script><script>SwaggerUIBundle({url:"/api/docs.json",dom_id:"#swagger-ui",presets:[SwaggerUIBundle.presets.apis],layout:"BaseLayout"})</script></body></html>`);
 });
 
+// API version discovery endpoint
+app.get('/api/version', (req, res) => {
+  res.json({
+    current: 'v1',
+    supported: ['legacy', 'v1'],
+    deprecated: [],
+    endpoints: {
+      legacy: '/api/*',
+      v1: '/api/v1/*'
+    }
+  });
+});
+
 // Push notification endpoint (broadcasts to all WebSocket clients)
-app.post('/api/notify', (req, res) => {
+const notifyHandler = (req, res) => {
   const { title, body, severity } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Title is required' });
   io.emit('push:notification', { title, body, severity: severity || 'info', timestamp: new Date().toISOString() });
   res.json({ sent: true });
-});
+};
+app.post('/api/notify', apiVersionHeader('legacy'), notifyHandler);
+app.post('/api/v1/notify', apiVersionHeader('v1'), notifyHandler);
 
 const intelligenceRouter = require('./routes/intelligence')(db);
-app.use('/api/intelligence', apiLimiter, authMiddleware, intelligenceRouter);
+mountApi('/intelligence', apiLimiter, authMiddleware, intelligenceRouter);
 
 const usersRouter = require('./routes/users')(db);
-app.use('/api/users', apiLimiter, authMiddleware, usersRouter);
+mountApi('/users', apiLimiter, authMiddleware, usersRouter);
 
 const settingsRouter = require('./routes/settings')(db);
-app.use('/api/settings', apiLimiter, authMiddleware, settingsRouter);
+mountApi('/settings', apiLimiter, authMiddleware, settingsRouter);
 
 // Health and metrics endpoints
 app.get('/healthz', (req, res) => res.status(200).send('OK'));
@@ -776,6 +816,38 @@ async function start() {
       console.error('Alert pruning failed:', err.message);
     }
   }, { name: 'alert-prune' });
+
+  // DLQ retry processing every 5 minutes
+  schedule('*/5 * * * *', async () => {
+    try {
+      const readyItems = await deadLetterQueue.getReadyForRetry(20);
+      if (readyItems.length === 0) return;
+      
+      console.log(`[DLQ Retry] Processing ${readyItems.length} ready items...`);
+      for (const item of readyItems) {
+        try {
+          // For now, log and mark as retried. Full replay requires worker integration.
+          console.log(`[DLQ Retry] Item ${item.id} from ${item.source} (attempt ${item.attempt_count + 1})`);
+          // Future: dispatch to appropriate worker/handler based on item.source and item.item_type
+          // await deadLetterQueue.recordRetry(item.id, 'Retry not yet implemented');
+        } catch (retryErr) {
+          await deadLetterQueue.recordRetry(item.id, retryErr.message);
+        }
+      }
+    } catch (err) {
+      console.error('DLQ retry processing failed:', err.message);
+    }
+  }, { name: 'dlq-retry' });
+
+  // Weekly audit log retention pruning (Monday at 2 AM)
+  schedule('0 2 * * 1', async () => {
+    try {
+      const deleted = await pruneOldAuditLogs(db, 90); // keep 90 days
+      if (deleted > 0) console.log(`Audit log retention: deleted ${deleted} old entries.`);
+    } catch (err) {
+      console.error('Audit log retention pruning failed:', err.message);
+    }
+  }, { name: 'audit-retention' });
 
   // Initial fetch on startup
   fetchAllSources();
