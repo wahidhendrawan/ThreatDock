@@ -48,6 +48,29 @@ describe('Middleware: rateLimit', () => {
   });
 });
 
+describe('Route authorization boundaries', () => {
+  const routeDir = path.resolve(__dirname, '../routes');
+  const contracts = [
+    ['ingestion.js', "router.get('/health', requireRole('viewer')"],
+    ['ingestion.js', "router.post('/fetch', requireRole('admin')"],
+    ['ingestion.js', "router.post('/circuit-breaker/reset', requireRole('admin')"],
+    ['ingestion.js', "router.get('/dlq', requireRole('admin')"],
+    ['settings.js', "router.get('/', requireRole('viewer')"],
+    ['settings.js', "router.put('/', requireRole('admin')"],
+    ['alerts.js', "router.get('/', requireRole('viewer')"],
+    ['alerts.js', "router.patch('/:id', requireRole('editor')"],
+    ['assets.js', "router.post('/', requireRole('editor')"],
+    ['assets.js', "router.delete('/:id', requireRole('admin')"],
+    ['users.js', "router.get('/', requireRole('admin')"],
+    ['users.js', "router.post('/', requireRole('admin')"]
+  ];
+
+  test.each(contracts)('%s protects endpoint with %s', (file, declaration) => {
+    const content = fs.readFileSync(path.join(routeDir, file), 'utf8');
+    expect(content).toContain(declaration);
+  });
+});
+
 describe('Config validation', () => {
   test('package.json has start script', () => {
     const pkg = require('../package.json');
