@@ -9,7 +9,7 @@ import ws from './socket';
 import {
   ThreatHunting, AssetDiscovery, ExposureMonitoring, AssetIntelligence,
   VulnPrioritization, PredictiveIntel, ThreatAnalysis, DigitalRisk,
-  BrandExposure, ThirdPartyRisk, IntelOperations, DnsImpersonation
+  BrandExposure, ThirdPartyRisk, IntelOperations, DnsImpersonation, SystemStatus
 } from './pages/Modules';
 import Settings from './pages/Settings';
 
@@ -563,6 +563,7 @@ function AppContent() {
         <Route path="/alerts" element={<AlertsPage alerts={filteredAlerts} total={totalAlerts} page={page} onPageChange={setPage} filters={filtersProps} authData={authData} handlers={{ handleStatusChange, handleAlertUpdate }} />} />
         <Route path="/hunting" element={<ThreatHunting authData={authData} />} />
         <Route path="/operations" element={<IntelOperations authData={authData} />} />
+        <Route path="/status" element={<SystemStatus authData={authData} />} />
         <Route path="/assets" element={<AssetDiscovery authData={authData} />} />
         <Route path="/exposure" element={<ExposureMonitoring alerts={filteredAlerts} />} />
         <Route path="/intel" element={<AssetIntelligence alerts={filteredAlerts} authData={authData} />} />

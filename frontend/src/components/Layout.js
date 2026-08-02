@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { 
   ShieldAlert, LayoutDashboard, Search, Globe, 
   Activity, Brain, Crosshair, TrendingUp, 
-  Network, Lock, Eye, Building2, Settings, LogOut, Sun, Moon
+  Network, Lock, Eye, Building2, Settings, LogOut, Sun, Moon, HeartPulse
 } from 'lucide-react';
 
 const navItems = [
@@ -21,6 +21,7 @@ const navItems = [
   { path: '/brand', label: 'Brand & Online Exposure', icon: <Eye size={20} /> },
   { path: '/dns-impersonation', label: 'Domain Impersonation', icon: <Globe size={20} /> },
   { path: '/third-party', label: 'Third-Party Risk', icon: <Building2 size={20} /> },
+  { path: '/status', label: 'System Status', icon: <HeartPulse size={20} /> },
   { path: '/settings', label: 'Settings', icon: <Settings size={20} /> },
 ];
 
