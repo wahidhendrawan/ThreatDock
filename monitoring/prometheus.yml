@@ -1,0 +1,20 @@
+# Sample Prometheus scrape configuration for ThreatDock.
+# Copy into your Prometheus instance's config directory alongside
+# prometheus-alerts.yml and reload with `kill -HUP $(pidof prometheus)`.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: threatdock
+
+rule_files:
+  - prometheus-alerts.yml
+
+scrape_configs:
+  - job_name: threatdock-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:5002"]
+        labels:
+          service: threatdock-backend
+          env: production

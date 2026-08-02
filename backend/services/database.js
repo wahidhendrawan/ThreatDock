@@ -513,6 +513,7 @@ async function createSchema(db) {
       attempt_count INTEGER DEFAULT 1,
       first_attempt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       last_attempt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      next_attempt_at TIMESTAMPTZ,
       status TEXT DEFAULT 'pending',
       resolved_at TIMESTAMPTZ,
       resolved_by TEXT,
@@ -548,6 +549,10 @@ async function createSchema(db) {
     'CREATE INDEX IF NOT EXISTS idx_ingestion_runs_started_at ON ingestion_runs(started_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_dlq_source_status ON dead_letter_queue(source, status)',
     'CREATE INDEX IF NOT EXISTS idx_dlq_last_attempt ON dead_letter_queue(last_attempt DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_dlq_next_attempt ON dead_letter_queue(status, next_attempt_at)',
+    // Compatibility migration for DLQ retry scheduling on existing deployments.
+    'ALTER TABLE dead_letter_queue ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ',
+    "UPDATE dead_letter_queue SET next_attempt_at = CURRENT_TIMESTAMP WHERE status = 'pending' AND next_attempt_at IS NULL",
     // Compatibility migrations for databases created before tenancy/RBAC.
     'ALTER TABLE alerts ADD COLUMN IF NOT EXISTS tenant_id INTEGER',
     'ALTER TABLE assets ADD COLUMN IF NOT EXISTS tenant_id INTEGER',

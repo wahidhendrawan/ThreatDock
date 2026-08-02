@@ -68,6 +68,8 @@ function requestLoggingMiddleware(req, res, next) {
     recordRequest(req.method, route, res.statusCode, durationMs / 1000);
     structuredLog(res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info', 'http_request', {
       request_id: req.requestId,
+      trace_id: req.trace?.traceId || null,
+      span_id: req.trace?.spanId || null,
       method: req.method,
       route,
       status_code: res.statusCode,

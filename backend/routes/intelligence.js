@@ -3,6 +3,14 @@ const intelligenceService = require('../services/intelligence');
 const settingsStore = require('../services/settingsStore');
 const { requireRole } = require('../services/identity');
 const { auditLog } = require('../services/audit');
+const cache = require('../services/cache');
+
+// Cache TTLs (in milliseconds)
+const CACHE_TTL = {
+  stats: 30_000,       // 30 seconds for stats
+  indicators: 60_000,  // 1 minute for indicator lists
+  correlations: 60_000 // 1 minute for correlations
+};
 
 function getSettings(db) {
   return settingsStore.getSettings(db);
@@ -35,15 +43,23 @@ module.exports = function createIntelligenceRouter(db) {
 
   // Indicators, correlations, and CVE enrichment are shared intelligence.
   // Tenant-owned alert lookups inside this router are always tenant scoped.
-  router.get('/stats', requireRole('viewer'), (req, res) => {
-    const stats = {};
-    db.get('SELECT COUNT(*) as count FROM indicators', [], (err, row) => {
-      if (!err) stats.indicators = row.count;
-      db.get('SELECT COUNT(*) as count FROM correlated_findings', [], (err2, row2) => {
-        if (!err2) stats.correlations = row2.count;
-        res.json(stats);
-      });
-    });
+  router.get('/stats', requireRole('viewer'), async (req, res) => {
+    try {
+      const cacheKey = `intel:stats:${req.tenant_id || 'global'}`;
+      const stats = await cache.wrap(cacheKey, () => new Promise((resolve) => {
+        const result = {};
+        db.get('SELECT COUNT(*) as count FROM indicators', [], (err, row) => {
+          if (!err && row) result.indicators = row.count;
+          db.get('SELECT COUNT(*) as count FROM correlated_findings', [], (err2, row2) => {
+            if (!err2 && row2) result.correlations = row2.count;
+            resolve(result);
+          });
+        });
+      }), CACHE_TTL.stats);
+      res.json(stats);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   router.get('/indicators', requireRole('viewer'), (req, res) => {
@@ -164,6 +180,10 @@ module.exports = function createIntelligenceRouter(db) {
   router.post('/correlations/rebuild', requireRole('admin'), async (req, res) => {
     if (correlationJob) return res.status(202).json({ message: 'Correlation rebuild already running' });
     correlationJob = intelligenceService.rebuildCorrelations(db)
+      .then(async () => {
+        // Invalidate stats cache after rebuild completes
+        await cache.del(`intel:stats:${req.tenant_id || 'global'}`).catch(() => {});
+      })
       .catch(err => console.error('Correlation rebuild failed:', err.message))
       .finally(() => { correlationJob = null; });
     await auditLog(db, {
