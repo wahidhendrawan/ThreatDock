@@ -34,8 +34,9 @@ module.exports = function(db) {
       });
       const actor = req.user ? req.user.name || req.user.email || 'Admin' : 'Admin';
       const changedEntries = Object.entries(settings).filter(([key, value]) => {
-        // Skip [redacted] placeholder — frontend sends this for unchanged secrets
-        if (String(value ?? '') === '[redacted]') return false;
+        // The frontend receives this placeholder for stored secrets. Preserve the
+        // existing ciphertext instead of writing the placeholder back to storage.
+        if (settingsStore.isSecretKey(key) && String(value ?? '') === '[redacted]') return false;
         return !existingKeys.has(key) || String(value ?? '') !== String(before[key] ?? '');
       });
 

@@ -83,7 +83,7 @@ function buildApp(mockDb) {
 describe('Settings API — Secret Redaction', () => {
   describe('GET /api/settings', () => {
     test('does not leak plaintext secrets — returns [redacted]', async () => {
-      const encryptedApiKey = settingsStore.prepareSettingValue('SLACK_API_KEY', 'xoxb-secret-token-12345');
+      const encryptedApiKey = settingsStore.prepareSettingValue('SLACK_API_KEY', 'synthetic-slack-token-12345');
       const mockDb = createMockDb([
         { key: 'SLACK_API_KEY', value: encryptedApiKey },
         { key: 'PUBLIC_CONFIG', value: 'public-value' }
@@ -95,7 +95,7 @@ describe('Settings API — Secret Redaction', () => {
       expect(res.body.SLACK_API_KEY).toBe('[redacted]');
       expect(res.body.PUBLIC_CONFIG).toBe('public-value');
       // Belt-and-suspenders: raw plaintext must not appear anywhere in the response
-      expect(JSON.stringify(res.body)).not.toContain('xoxb-secret-token');
+      expect(JSON.stringify(res.body)).not.toContain('synthetic-slack-token-12345');
     });
 
     test('masks every secret-like key regardless of encryption state', async () => {
@@ -178,6 +178,20 @@ describe('Settings API — Secret Redaction', () => {
         .expect(200);
 
       expect(mockDb._store.get('THEME')).toBe('dark');
+    });
+
+    test('stores [redacted] when it is the intended value of a non-secret setting', async () => {
+      const mockDb = createMockDb([
+        { key: 'DISPLAY_LABEL', value: 'visible' }
+      ]);
+      const app = buildApp(mockDb);
+
+      await request(app)
+        .put('/api/settings')
+        .send({ DISPLAY_LABEL: '[redacted]' })
+        .expect(200);
+
+      expect(mockDb._store.get('DISPLAY_LABEL')).toBe('[redacted]');
     });
 
     test('mixed update: [redacted] preserved, new values applied', async () => {
