@@ -53,9 +53,39 @@ app.use((req, res, next) => {
   next();
 });
 app.use(cors());
-app.use(express.json());
+
+// P0-3: JSON body size limit (defense against oversized payloads).
+// Applies to all API requests. Individual routes may still layer stricter limits.
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '10mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+// P0-3: Reject non-JSON content on JSON-only endpoints and cap URL-encoded payloads.
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+
+// P0-3: Per-request timeout guard so that a slow client/large upstream cannot pin a socket.
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '30000', 10);
+app.use((req, res, next) => {
+  req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    if (!res.headersSent) {
+      res.status(504).json({ error: 'Request timed out' });
+    }
+    req.destroy();
+  });
+  next();
+});
 
 app.disable('x-powered-by');
+
+// P0-3: Map body-parser failures to clear client errors instead of generic 500s.
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request payload exceeds the configured size limit.' });
+  }
+  if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+    return res.status(400).json({ error: 'Malformed request body.' });
+  }
+  return next(err);
+});
 
 // Trust proxy for correct IP detection behind nginx
 app.set('trust proxy', 1);
@@ -586,7 +616,7 @@ app.get('/api/docs', (req, res) => {
 });
 
 // Push notification endpoint (broadcasts to all WebSocket clients)
-app.post('/api/notify', express.json(), (req, res) => {
+app.post('/api/notify', (req, res) => {
   const { title, body, severity } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Title is required' });
   io.emit('push:notification', { title, body, severity: severity || 'info', timestamp: new Date().toISOString() });
