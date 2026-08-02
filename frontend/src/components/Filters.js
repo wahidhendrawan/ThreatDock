@@ -17,8 +17,8 @@ function Filters({
   return (
     <div className="filters-container">
       <div className="filter-group">
-        <label>Severity</label>
-        <select value={severity} onChange={e => setSeverity(e.target.value)}>
+        <label htmlFor="filter-severity">Severity</label>
+        <select id="filter-severity" value={severity} onChange={e => setSeverity(e.target.value)}>
           <option value="">All</option>
           <option value="Critical">Critical</option>
           <option value="High">High</option>
@@ -29,8 +29,8 @@ function Filters({
       </div>
 
       <div className="filter-group">
-        <label>Source</label>
-        <select value={source} onChange={e => setSource(e.target.value)}>
+        <label htmlFor="filter-source">Source</label>
+        <select id="filter-source" value={source} onChange={e => setSource(e.target.value)}>
           <option value="">All</option>
           <option value="GitHub">GitHub</option>
           <option value="NVD">NVD</option>
@@ -48,8 +48,8 @@ function Filters({
       </div>
 
       <div className="filter-group">
-        <label>Status</label>
-        <select value={status} onChange={e => setStatus(e.target.value)}>
+        <label htmlFor="filter-status">Status</label>
+        <select id="filter-status" value={status} onChange={e => setStatus(e.target.value)}>
           <option value="">All</option>
           <option value="Open">Open</option>
           <option value="In Progress">In Progress</option>
@@ -58,8 +58,8 @@ function Filters({
       </div>
 
       <div className="filter-group">
-        <label>Attack Phase</label>
-        <select value={attackPhase} onChange={e => setAttackPhase(e.target.value)}>
+        <label htmlFor="filter-attack-phase">Attack Phase</label>
+        <select id="filter-attack-phase" value={attackPhase} onChange={e => setAttackPhase(e.target.value)}>
           <option value="">All</option>
           <option value="Unknown">Unknown</option>
           <option value="Initial Access">Initial Access</option>
@@ -78,13 +78,13 @@ function Filters({
       </div>
 
       <div className="filter-group">
-        <label>Start Date</label>
-        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+        <label htmlFor="filter-start-date">Start Date</label>
+        <input id="filter-start-date" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
       </div>
 
       <div className="filter-group">
-        <label>End Date</label>
-        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+        <label htmlFor="filter-end-date">End Date</label>
+        <input id="filter-end-date" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
       </div>
     </div>
   );

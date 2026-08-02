@@ -258,8 +258,9 @@ function AlertList({ alerts, authData, onStatusChange, onAlertUpdate }) {
                             </div>
 
                             <div className="form-group">
-                              <label className="form-label">Current Status</label>
+                              <label className="form-label" htmlFor={`alert-${alert.id}-status`}>Current Status</label>
                               <select
+                                id={`alert-${alert.id}-status`}
                                 className="form-select"
                                 value={alert.status || 'Open'}
                                 onChange={e => handleStatus(alert, e.target.value)}

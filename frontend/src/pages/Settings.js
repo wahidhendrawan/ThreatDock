@@ -1,6 +1,44 @@
 import React, { useState, useEffect } from 'react';
 import { Lock, Shield, Globe, Eye, Bell, Wifi, Users, Save, Plus, Trash2, Edit, Key, CheckCircle, AlertCircle, Activity } from 'lucide-react';
 
+/* ── Helper: status dot for API key fields (stable reference outside parent) ── */
+const StatusDot = ({ value }) => (
+  <span style={{
+    display: 'inline-block',
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    backgroundColor: value ? '#22c55e' : '#f59e0b',
+    marginRight: '8px',
+    flexShrink: 0
+  }}
+  title={value ? 'Configured' : 'Not configured'}
+  />
+);
+
+/* ── Helper: single API-key / secret field (stable reference outside parent to preserve focus) ── */
+const ApiKeyField = ({ label, description, settingKey, placeholder, value, onChange }) => (
+  <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+    <label htmlFor={`setting-${settingKey}`} className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+      <StatusDot value={value} />
+      {label}
+    </label>
+    <input
+      id={`setting-${settingKey}`}
+      type="password"
+      className="form-input"
+      value={value || ''}
+      onChange={onChange}
+      placeholder={placeholder || 'Optional'}
+    />
+    {description && (
+      <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+        {description}
+      </span>
+    )}
+  </div>
+);
+
 export default function Settings({ authData }) {
   const [activeTab, setActiveTab] = useState('auth');
   const [settings, setSettings] = useState(null);
@@ -201,42 +239,11 @@ export default function Settings({ authData }) {
     }
   };
 
-  /* ── Helper: status dot for API key fields ── */
-  const StatusDot = ({ value }) => (
-    <span style={{
-      display: 'inline-block',
-      width: '8px',
-      height: '8px',
-      borderRadius: '50%',
-      backgroundColor: value ? '#22c55e' : '#f59e0b',
-      marginRight: '8px',
-      flexShrink: 0
-    }}
-    title={value ? 'Configured' : 'Not configured'}
-    />
-  );
-
-  /* ── Helper: single API-key / secret field ── */
-  const ApiKeyField = ({ label, description, settingKey, placeholder }) => (
-    <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-        <StatusDot value={settings[settingKey]} />
-        {label}
-      </label>
-      <input
-        type="password"
-        className="form-input"
-        value={settings[settingKey] || ''}
-        onChange={(e) => setSettings({ ...settings, [settingKey]: e.target.value })}
-        placeholder={placeholder || 'Optional'}
-      />
-      {description && (
-        <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-          {description}
-        </span>
-      )}
-    </div>
-  );
+  /* ── Wrapper that binds ApiKeyField to current settings state ── */
+  const bindKey = (settingKey) => ({
+    value: settings?.[settingKey],
+    onChange: (e) => setSettings({ ...settings, [settingKey]: e.target.value })
+  });
 
   /* ── Tab definitions ── */
   const tabs = [
@@ -453,22 +460,26 @@ export default function Settings({ authData }) {
               description="Used to query the GitHub Advisory Database for known vulnerabilities in open-source packages."
               settingKey="GITHUB_TOKEN"
               placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              {...bindKey('GITHUB_TOKEN')}
             />
             <ApiKeyField
               label="NVD API Key"
               description="Access the NIST National Vulnerability Database for CVE enrichment and lookups."
               settingKey="NVD_API_KEY"
               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              {...bindKey('NVD_API_KEY')}
             />
             <ApiKeyField
               label="AlienVault OTX API Key"
               description="Open Threat Exchange — community-driven threat intelligence with IOC and pulse data."
               settingKey="OTX_API_KEY"
+              {...bindKey('OTX_API_KEY')}
             />
             <ApiKeyField
               label="ThreatFox Auth Key"
               description="ThreatFox by abuse.ch — indicators of compromise (IOCs) including malware, C2 servers."
               settingKey="THREATFOX_AUTH_KEY"
+              {...bindKey('THREATFOX_AUTH_KEY')}
             />
 
             <div className="form-group" style={{ marginBottom: '1.25rem' }}>
@@ -492,11 +503,13 @@ export default function Settings({ authData }) {
               label="MISP API Key"
               description="Authentication key for your MISP instance to pull and push threat intelligence events."
               settingKey="MISP_API_KEY"
+              {...bindKey('MISP_API_KEY')}
             />
             <ApiKeyField
               label="IntelOwl API Key"
               description="IntelOwl — aggregated threat intelligence analysis for observables (IPs, domains, hashes)."
               settingKey="INTELO_OWL_API_KEY"
+              {...bindKey('INTELO_OWL_API_KEY')}
             />
 
             <div style={{ marginTop: '1rem' }}>
@@ -525,16 +538,19 @@ export default function Settings({ authData }) {
               label="SecurityTrails API Key"
               description="Discover subdomains, DNS records, and historical WHOIS data for your assets."
               settingKey="SECURITYTRAILS_API_KEY"
+              {...bindKey('SECURITYTRAILS_API_KEY')}
             />
             <ApiKeyField
               label="VirusTotal API Key"
               description="Community API for domain reputation, file analysis, and URL scanning intelligence."
               settingKey="VIRUSTOTAL_API_KEY"
+              {...bindKey('VIRUSTOTAL_API_KEY')}
             />
             <ApiKeyField
               label="URLScan.io API Key"
               description="Automated website scanning — detect phishing, brand impersonation, and exposure."
               settingKey="URLSCAN_API_KEY"
+              {...bindKey('URLSCAN_API_KEY')}
             />
 
             <div style={{ marginTop: '1rem' }}>
@@ -642,6 +658,7 @@ export default function Settings({ authData }) {
               description="RapidAPI key for BreachDirectory credential exposure lookup."
               settingKey="BREACHDIRECTORY_RAPIDAPI_KEY"
               placeholder="RapidAPI application key"
+              {...bindKey('BREACHDIRECTORY_RAPIDAPI_KEY')}
             />
             <div className="form-group" style={{ marginBottom: '1.25rem' }}>
               <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -663,6 +680,7 @@ export default function Settings({ authData }) {
               label="Intelligence X API Key"
               description="Search leaked databases, dark web pastes, and historical data for identity exposure."
               settingKey="INTELX_API_KEY"
+              {...bindKey('INTELX_API_KEY')}
             />
             <div style={{ marginTop: '1rem' }}>
               <button type="submit" className="btn btn-primary"><Save size={16} /> Save Configuration</button>
