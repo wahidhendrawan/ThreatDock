@@ -14,3 +14,5 @@ repos:
       - id: detect-private-key
       - id: detect-aws-credentials
         args: [--allow-missing-credentials]
+      - id: check-added-large-files
+        args: [--maxkb=1000]
