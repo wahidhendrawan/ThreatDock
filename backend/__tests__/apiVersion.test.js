@@ -1,6 +1,18 @@
 /**
  * API versioning tests
  */
+jest.mock('jwks-rsa', () => ({
+  JwksClient: jest.fn().mockImplementation(() => ({
+    getSigningKey: jest.fn().mockResolvedValue({
+      getPublicKey: () => '-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----'
+    })
+  }))
+}));
+jest.mock('../services/oauth', () => ({
+  validateToken: jest.fn((req, res, next) => next()),
+  exchangeCodeForToken: jest.fn().mockResolvedValue({ id_token: 'mock-id-token' }),
+  getUserInfo: jest.fn().mockResolvedValue({ sub: 'test-user' })
+}));
 const request = require('supertest');
 const app = require('../app');
 
@@ -14,12 +26,12 @@ describe('API versioning', () => {
   });
 
   test('Legacy /api/alerts returns X-API-Version: legacy header', async () => {
-    const res = await request(app).get('/api/alerts').expect(401); // Unauthorized due to missing auth
+    const res = await request(app).get('/api/alerts').expect(200); // Now 200 due to auth mock
     expect(res.headers['x-api-version']).toBe('legacy');
   });
 
   test('Versioned /api/v1/alerts returns X-API-Version: v1 header', async () => {
-    const res = await request(app).get('/api/v1/alerts').expect(401);
+    const res = await request(app).get('/api/v1/alerts').expect(200);
     expect(res.headers['x-api-version']).toBe('v1');
   });
 

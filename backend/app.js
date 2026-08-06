@@ -973,7 +973,12 @@ async function start() {
   });
 }
 
-start().catch(err => {
-  console.error('Failed to start backend:', err.message);
-  db.close(() => process.exit(1));
-});
+// Only start server if running directly (not imported by tests)
+if (require.main === module) {
+  start().catch(err => {
+    console.error('Failed to start backend:', err.message);
+    db.close(() => process.exit(1));
+  });
+}
+
+module.exports = app;
