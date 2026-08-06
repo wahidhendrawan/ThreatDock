@@ -24,7 +24,7 @@ jobs:
           node-version: 22
       - name: Install dependencies
         working-directory: backend
-        run: npm install
+        run: npm ci
       - name: Create __mocks__ for axios (avoids network dependency in CI)
         working-directory: backend
         run: |
@@ -72,7 +72,7 @@ jobs:
           node-version: 20
       - name: Install dependencies
         working-directory: frontend
-        run: npm install
+        run: npm ci
       - name: Lint frontend
         working-directory: frontend
         run: npm run lint --if-present || echo "skip"
