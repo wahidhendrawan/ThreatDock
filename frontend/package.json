@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "lucide-react": "^1.45.0",
+    "lucide-react": "^1.47.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-router-dom": "^7.18.3",
+    "react-router-dom": "^7.18.4",
     "react-scripts": "5.0.1",
     "recharts": "^3.10.1",
     "socket.io-client": "^4.8.1"
