@@ -239,8 +239,10 @@ router.post('/setup-mfa', async (req, res) => {
     const settings = await getSettings(req.db);
     const decoded = jwt.verify(tempToken, settings.JWT_SECRET, { algorithms: ['HS256'] });
     if (!decoded.mfaPending || !decoded.tenant_id) return res.status(400).json({ error: 'Invalid token' });
-    const user = await dbGet(req.db, 'SELECT id, tenant_id, username FROM users WHERE id = ? AND tenant_id = ?', [decoded.id, decoded.tenant_id]);
+    const user = await dbGet(req.db, 'SELECT id, tenant_id, username, mfa_enabled, mfa_secret FROM users WHERE id = ? AND tenant_id = ?', [decoded.id, decoded.tenant_id]);
     if (!user) return res.status(401).json({ error: 'User not found' });
+    // The temp token only proves the password; it must not replace an enrolled factor.
+    if (user.mfa_enabled && user.mfa_secret) return res.status(409).json({ error: 'MFA is already enrolled' });
     const secret = generateSecret();
     const otpauth = generateURI({ accountName: user.username, issuer: 'ThreatDock', secret });
     const qrCodeUrl = await qrcode.toDataURL(otpauth);

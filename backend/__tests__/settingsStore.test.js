@@ -23,9 +23,9 @@ describe('settingsStore encryption', () => {
       expect(isSecretKey('AUTH_PASSWORD')).toBe(true);
     });
 
-    it('exempts JWT_SECRET because it seeds the encryption key', () => {
+    it('treats JWT_SECRET as a secret so it is masked and encrypted', () => {
       const { isSecretKey } = require('../services/settingsStore');
-      expect(isSecretKey('JWT_SECRET')).toBe(false);
+      expect(isSecretKey('JWT_SECRET')).toBe(true);
     });
 
     it('leaves non-secret keys untouched', () => {
@@ -101,12 +101,32 @@ describe('settingsStore encryption', () => {
       expect(store.decryptValue(encrypted)).toBe('value');
     });
 
-    it('falls back to JWT_SECRET when SETTINGS_ENCRYPTION_KEY is missing', () => {
+    it('refuses to encrypt without SETTINGS_ENCRYPTION_KEY instead of using a built-in key', () => {
       delete process.env.SETTINGS_ENCRYPTION_KEY;
-      process.env.JWT_SECRET = 'jwt-fallback-key';
+      process.env.JWT_SECRET = 'jwt-secret';
       const store = require('../services/settingsStore');
-      const encrypted = store.prepareSettingValue('OTX_API_KEY', 'value');
-      expect(store.decryptValue(encrypted)).toBe('value');
+      expect(() => store.prepareSettingValue('OTX_API_KEY', 'value')).toThrow('SETTINGS_ENCRYPTION_KEY');
+    });
+
+    it('still decrypts values written with the legacy JWT_SECRET and built-in keys', () => {
+      const legacyCiphertext = (material, text) => {
+        const iv = crypto.randomBytes(12);
+        const key = crypto.createHash('sha256').update(material).digest();
+        const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+        const data = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+        return `enc:v1:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${data.toString('base64')}`;
+      };
+      process.env.SETTINGS_ENCRYPTION_KEY = 'new-dedicated-key';
+      process.env.JWT_SECRET = 'old-jwt-secret';
+      const store = require('../services/settingsStore');
+      expect(store.decryptValue(legacyCiphertext('old-jwt-secret', 'from-jwt'))).toBe('from-jwt');
+      expect(store.decryptValue(legacyCiphertext('threatdock-local-settings-key-change-in-production', 'from-builtin'))).toBe('from-builtin');
+
+      // Re-encrypting on write uses only the dedicated key.
+      const rewritten = store.prepareSettingValue('OTX_API_KEY', 'from-jwt');
+      delete process.env.JWT_SECRET;
+      jest.resetModules();
+      expect(require('../services/settingsStore').decryptValue(rewritten)).toBe('from-jwt');
     });
 
     it('fails to decrypt when the key has changed', () => {
@@ -151,9 +171,11 @@ describe('settingsStore encryption', () => {
       const store = require('../services/settingsStore');
       const masked = store.maskSecrets({
         OTX_API_KEY: 'sensitive',
+        JWT_SECRET: 'token-signing-key',
         FRONTEND_URL: 'https://example.com'
       });
       expect(masked.OTX_API_KEY).toBe('[redacted]');
+      expect(masked.JWT_SECRET).toBe('[redacted]');
       expect(masked.FRONTEND_URL).toBe('https://example.com');
     });
 

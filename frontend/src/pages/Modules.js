@@ -14,8 +14,6 @@ function getAuthHeaders(authData) {
   const headers = {};
   if (authData?.token) {
     headers['Authorization'] = `Bearer ${authData.token}`;
-  } else if (authData?.basic) {
-    headers['Authorization'] = `Basic ${btoa(authData.basic.user + ':' + authData.basic.pass)}`;
   }
   return headers;
 }

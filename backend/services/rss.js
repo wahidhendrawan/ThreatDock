@@ -1,36 +1,35 @@
 const Parser = require('rss-parser');
 
-const { resolvePublicAddresses } = require('./outboundHttp');
+const { outboundHttp } = require('./outboundHttp');
 
-// Wrap RSS parser HTTP requests with SSRF guard
-const originalParseURL = Parser.prototype.parseURL;
-Parser.prototype.parseURL = async function parseURLWithGuard(url, ...args) {
-  await resolvePublicAddresses(new URL(url).hostname);
-  return originalParseURL.call(this, url, ...args);
+const parser = new Parser();
+const FEED_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.5'
 };
+const MAX_FEED_BYTES = 5 * 1024 * 1024;
 
-// Use node-fetch to provide custom behavior if needed, or simply standard custom headers
-const parser = new Parser({
-  timeout: 10000,
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5'
-  }
-});
-
+// Final URLs: outboundHttp does not follow redirects.
 const feedList = [
   { name: 'SANS Internet Storm Center', url: 'https://isc.sans.edu/rssfeed_full.xml' },
-  { name: 'US-CERT Alerts', url: 'https://us-cert.cisa.gov/ncas/alerts.xml' },
-  { name: 'BleepingComputer', url: 'https://www.bleepingcomputer.com/feed' },
-  { name: 'Krebs on Security', url: 'http://krebsonsecurity.com/feed/' }
+  { name: 'US-CERT Alerts', url: 'https://www.cisa.gov/cybersecurity-advisories/cybersecurity-advisories.xml' },
+  { name: 'BleepingComputer', url: 'https://www.bleepingcomputer.com/feed/' },
+  { name: 'Krebs on Security', url: 'https://krebsonsecurity.com/feed/' }
 ];
 
 async function fetchRssFeeds() {
   const results = [];
   for (const feed of feedList) {
     try {
-      const parsed = await parser.parseURL(feed.url);
+      // outboundHttp enforces HTTPS, the host allowlist and public-IP pinning.
+      const response = await outboundHttp.get(feed.url, {
+        headers: FEED_HEADERS,
+        timeout: 10000,
+        responseType: 'text',
+        maxContentLength: MAX_FEED_BYTES
+      });
+      const parsed = await parser.parseString(response.data);
       if (parsed && Array.isArray(parsed.items)) {
         for (const item of parsed.items) {
           results.push({
@@ -49,4 +48,4 @@ async function fetchRssFeeds() {
   return results;
 }
 
-module.exports = { fetchRssFeeds };
+module.exports = { fetchRssFeeds, feedList };

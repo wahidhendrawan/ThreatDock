@@ -28,10 +28,10 @@ function rateLimit({ windowMs = 60000, max = 100, message = 'Too many requests',
     if (typeof keyFn === 'function') {
       key = keyFn(req);
     }
-    // Fallback to IP if keyFn not provided or returns falsy
+    // Fallback to IP if keyFn not provided or returns falsy. req.ip honours the
+    // app's `trust proxy` setting; the raw X-Forwarded-For header is client-controlled.
     if (!key) {
-      const forwarded = req.headers['x-forwarded-for'];
-      key = forwarded ? forwarded.split(',')[0].trim() : (req.ip || req.connection.remoteAddress || 'unknown');
+      key = req.ip || req.socket.remoteAddress || 'unknown';
     }
     const now = Date.now();
     let entry = rateStore.get(key);

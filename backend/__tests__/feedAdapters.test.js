@@ -16,10 +16,9 @@ jest.mock('../services/outboundHttp', () => ({
 }));
 
 jest.mock('rss-parser', () => {
-  const parseURL = jest.fn();
-  const Parser = jest.fn().mockImplementation(() => ({ parseURL }));
-  Parser.prototype = { parseURL };
-  Parser.__parseURL = parseURL;
+  const parseString = jest.fn();
+  const Parser = jest.fn().mockImplementation(() => ({ parseString }));
+  Parser.__parseString = parseString;
   return Parser;
 });
 
@@ -40,14 +39,31 @@ describe('Feed adapters', () => {
 
   describe('RSS adapter', () => {
     let fetchRssFeeds;
+    let feedList;
 
     beforeAll(() => {
-      // Load after mock so the SSRF wrap uses the mocked parseURL
-      ({ fetchRssFeeds } = require('../services/rss'));
+      ({ fetchRssFeeds, feedList } = require('../services/rss'));
+    });
+
+    beforeEach(() => {
+      outboundHttp.get.mockResolvedValue({ data: '<rss></rss>' });
+    });
+
+    it('fetches every feed over HTTPS through the guarded outbound client with a size cap', async () => {
+      Parser.__parseString.mockResolvedValue({ items: [] });
+      await fetchRssFeeds();
+
+      expect(feedList.every(feed => feed.url.startsWith('https://'))).toBe(true);
+      expect(outboundHttp.get).toHaveBeenCalledTimes(feedList.length);
+      for (const [url, options] of outboundHttp.get.mock.calls) {
+        expect(url).toMatch(/^https:\/\//);
+        expect(options.maxContentLength).toBeGreaterThan(0);
+      }
+      expect(Parser.__parseString).toHaveBeenCalledWith('<rss></rss>');
     });
 
     it('normalizes items across configured feeds', async () => {
-      Parser.__parseURL.mockResolvedValue({
+      Parser.__parseString.mockResolvedValue({
         items: [
           {
             guid: 'guid-1',
@@ -71,7 +87,7 @@ describe('Feed adapters', () => {
     });
 
     it('falls back to link or id when guid is missing', async () => {
-      Parser.__parseURL.mockResolvedValue({
+      Parser.__parseString.mockResolvedValue({
         items: [
           { title: 'No GUID', link: 'https://example.com/x' },
           { title: 'Only ID', id: 'id-42' }
@@ -85,13 +101,13 @@ describe('Feed adapters', () => {
     });
 
     it('handles missing titles and empty item arrays gracefully', async () => {
-      Parser.__parseURL.mockResolvedValue({ items: [{ link: 'https://example.com/y' }] });
+      Parser.__parseString.mockResolvedValue({ items: [{ link: 'https://example.com/y' }] });
       const results = await fetchRssFeeds();
       expect(results.every(r => typeof r.title === 'string')).toBe(true);
     });
 
     it('does not throw when a feed rejects; returns items from successful feeds', async () => {
-      Parser.__parseURL
+      Parser.__parseString
         .mockRejectedValueOnce(new Error('network down'))
         .mockResolvedValue({ items: [{ guid: 'ok-1', title: 't', link: 'https://ok/1' }] });
 
@@ -100,7 +116,7 @@ describe('Feed adapters', () => {
     });
 
     it('returns [] when parser returns null or unexpected shapes', async () => {
-      Parser.__parseURL.mockResolvedValue(null);
+      Parser.__parseString.mockResolvedValue(null);
       const results = await fetchRssFeeds();
       expect(results).toEqual([]);
     });

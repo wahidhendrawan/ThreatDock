@@ -9,7 +9,12 @@ const listeners = new Map();
 
 function getSocket() {
   if (!socket) {
-    socket = io({ transports: ['polling', 'websocket'], autoConnect: false });
+    // Function form so every (re)connect sends the current access token.
+    socket = io({
+      transports: ['polling', 'websocket'],
+      autoConnect: false,
+      auth: cb => cb({ token: localStorage.getItem('threatdock_token') })
+    });
   }
   return socket;
 }

@@ -1,5 +1,4 @@
 const { validateToken } = require('../services/oauth');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const settingsStore = require('../services/settingsStore');
 const { normalizeRoles } = require('../services/identity');
@@ -82,21 +81,6 @@ module.exports = async function auth(req, res, next) {
       return res.status(401).send('Invalid or expired token');
     }
 
-    if (header && header.startsWith('Basic ')) {
-      const decoded = Buffer.from(header.slice('Basic '.length), 'base64').toString();
-      const separator = decoded.indexOf(':');
-      if (separator < 1) return res.status(401).json({ error: 'Invalid credentials' });
-      const username = decoded.slice(0, separator);
-      const password = decoded.slice(separator + 1);
-      const user = await getUser(db, 'SELECT * FROM users WHERE username = ? AND auth_provider = ?', [username, 'local']);
-      if (!user || !bcrypt.compareSync(password, user.password_hash || '')) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-      req.user = userIdentity(user, 'local');
-      req.tenant_id = user.tenant_id;
-      return next();
-    }
-
     return res.status(401).json({ error: 'Authentication required' });
   } catch (err) {
     console.error('Auth middleware error:', err);
@@ -105,3 +89,20 @@ module.exports = async function auth(req, res, next) {
 };
 
 module.exports.userIdentity = userIdentity;
+
+// Socket.IO handshake: the client sends the same local access token via `auth.token`.
+module.exports.socketAuth = db => async (socket, next) => {
+  try {
+    const settings = await settingsStore.getSettings(db);
+    const token = String((socket.handshake.auth && socket.handshake.auth.token) || '');
+    const decoded = jwt.verify(token, settings.JWT_SECRET, { algorithms: ['HS256'] });
+    const user = decoded.mfaPending || !decoded.id
+      ? null
+      : await getUser(db, 'SELECT id, tenant_id FROM users WHERE id = ? AND tenant_id = ?', [decoded.id, decoded.tenant_id]);
+    if (!user) return next(new Error('Unauthorized'));
+    socket.join(`tenant:${user.tenant_id}`);
+    return next();
+  } catch {
+    return next(new Error('Unauthorized'));
+  }
+};

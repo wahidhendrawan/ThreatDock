@@ -5,10 +5,13 @@ const jwksClient = require('jwks-rsa');
 // Cache jwks clients by issuer URL to avoid creating a new one on every request
 const jwksClients = {};
 
-function getJwksClient(issuerUrl) {
+async function getJwksClient(issuerUrl) {
   if (!jwksClients[issuerUrl]) {
+    const config = await discoverEndpoints(issuerUrl);
     jwksClients[issuerUrl] = jwksClient({
-      jwksUri: `${issuerUrl}jwks/`,
+      // Prefer the advertised jwks_uri; the fallback keeps the old path with a proper slash join.
+      jwksUri: (config && config.jwks_uri) || `${issuerUrl.replace(/\/$/, '')}/jwks/`,
+      fetcher: async uri => (await axios.get(uri, { timeout: 10000 })).data,
       cache: true,
       rateLimit: true
     });
@@ -18,15 +21,13 @@ function getJwksClient(issuerUrl) {
 
 function getKey(issuerUrl) {
   return function(header, callback) {
-    const client = getJwksClient(issuerUrl);
-    client.getSigningKey(header.kid, function(err, key) {
-      if (err) {
+    getJwksClient(issuerUrl)
+      .then(client => client.getSigningKey(header.kid))
+      .then(key => callback(null, key.publicKey || key.rsaPublicKey))
+      .catch(err => {
         console.error('JWKS error:', err.message);
-        return callback(err);
-      }
-      const signingKey = key.publicKey || key.rsaPublicKey;
-      callback(null, signingKey);
-    });
+        callback(err);
+      });
   };
 }
 
@@ -37,8 +38,10 @@ function validateToken(token, settings) {
   return new Promise((resolve, reject) => {
     const issuerUrl = settings.OIDC_ISSUER_URL;
     if (!issuerUrl) return reject(new Error('OIDC_ISSUER_URL not configured'));
+    // jsonwebtoken skips the audience check when it is undefined, so require it.
+    if (!settings.OIDC_CLIENT_ID) return reject(new Error('OIDC_CLIENT_ID not configured'));
 
-    jwt.verify(token, getKey(issuerUrl), { issuer: issuerUrl }, (err, decoded) => {
+    jwt.verify(token, getKey(issuerUrl), { issuer: issuerUrl, audience: settings.OIDC_CLIENT_ID }, (err, decoded) => {
       if (err) {
         return reject(err);
       }
