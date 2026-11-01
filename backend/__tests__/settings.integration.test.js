@@ -6,6 +6,8 @@ const request = require('supertest');
 const express = require('express');
 const settingsStore = require('../services/settingsStore');
 
+process.env.SETTINGS_ENCRYPTION_KEY = process.env.SETTINGS_ENCRYPTION_KEY || 'settings-integration-test-key';
+
 // Mock database that mimics sqlite3-style callback API used by services/db.js
 function createMockDb(initialRows = []) {
   const store = new Map(initialRows.map(r => [r.key, r.value]));
@@ -96,6 +98,24 @@ describe('Settings API — Secret Redaction', () => {
       expect(res.body.PUBLIC_CONFIG).toBe('public-value');
       // Belt-and-suspenders: raw plaintext must not appear anywhere in the response
       expect(JSON.stringify(res.body)).not.toContain('synthetic-slack-token-12345');
+    });
+
+    test('never returns JWT_SECRET to a viewer (plaintext or encrypted at rest)', async () => {
+      const mockDb = createMockDb([
+        { key: 'JWT_SECRET', value: 'legacy-plaintext-signing-key' },
+        { key: 'FRONTEND_URL', value: 'http://localhost:3000' }
+      ]);
+      const app = express();
+      app.use((req, res, next) => {
+        req.user = { name: 'viewer', roles: ['viewer'] };
+        next();
+      });
+      app.use('/api/settings', require('../routes/settings')(mockDb));
+
+      const res = await request(app).get('/api/settings').expect(200);
+
+      expect(res.body.JWT_SECRET).toBe('[redacted]');
+      expect(JSON.stringify(res.body)).not.toContain('legacy-plaintext-signing-key');
     });
 
     test('masks every secret-like key regardless of encryption state', async () => {

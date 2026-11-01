@@ -2,6 +2,7 @@ const express = require('express');
 const dns = require('dns').promises;
 const { generateMutations } = require('../services/dnstwist');
 const { requireRole } = require('../services/identity');
+const rateLimit = require('../middleware/rateLimit');
 
 const COMMON_TLD_VARIANTS = [
   'com', 'net', 'org', 'co', 'id', 'io', 'biz', 'info', 'xyz', 'site',
@@ -80,6 +81,13 @@ async function lookupDomainRecords(domain) {
 
 module.exports = function createDnsImpersonationRouter(db) {
   const router = express.Router();
+  // Each scan fans out to ~720 DNS queries, so cap scans per user.
+  const scanLimiter = rateLimit({
+    windowMs: 60000,
+    max: 5,
+    message: 'DNS scan rate limit exceeded (5/min)',
+    keyFn: req => `dns-scan:${req.user.id}`
+  });
 
   const handleScan = async (req, res) => {
     const domain = normalizeDomainInput(req.body && req.body.domain);
@@ -102,8 +110,8 @@ module.exports = function createDnsImpersonationRouter(db) {
     }
   };
 
-  router.post('/scan', requireRole('viewer'), handleScan);
-  router.post('/', requireRole('viewer'), handleScan);
+  router.post('/scan', requireRole('viewer'), scanLimiter, handleScan);
+  router.post('/', requireRole('viewer'), scanLimiter, handleScan);
 
   return router;
 };

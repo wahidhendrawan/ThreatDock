@@ -58,8 +58,7 @@ export default function Settings({ authData }) {
 
   const headers = {
     'Content-Type': 'application/json',
-    ...(authData?.token ? { 'Authorization': `Bearer ${authData.token}` } :
-        authData?.basic ? { 'Authorization': `Basic ${btoa(authData.basic.user + ':' + authData.basic.pass)}` } : {})
+    ...(authData?.token ? { 'Authorization': `Bearer ${authData.token}` } : {})
   };
 
   const API_BASE = '/api';
@@ -176,10 +175,15 @@ export default function Settings({ authData }) {
   };
 
   const handleSetupMfa = async (userId) => {
+    // shortcut: window.prompt shows the password in clear text; replace with a masked modal if this flow gets more use.
+    const password = window.prompt('Confirm your current password to change MFA');
+    if (password === null) return;
+    const code = window.prompt('Your current 6-digit MFA code (leave empty if you have no MFA yet)') || '';
     try {
       const res = await fetch(`${API_BASE}/users/${userId}/mfa/setup`, {
         method: 'POST',
-        headers
+        headers,
+        body: JSON.stringify({ password, code })
       });
       if (res.ok) {
         const data = await res.json();

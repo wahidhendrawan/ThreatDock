@@ -1,10 +1,9 @@
-[![CI](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml/badge.svg)](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml)
-
 # ThreatDock 🛡️
 
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL-3.0-blue.svg)](https://github.com/wahidhendrawan/ThreatDock/blob/main/LICENSE)
-[![Release](https://img.shields.io/badge/release-v1.2.0-green.svg)](https://github.com/wahidhendrawan/ThreatDock/releases)
-[![CI](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml/badge.svg)](https://github.com/wahidhendrawan/ThreatDock/actions)
+[![CI](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml/badge.svg)](https://github.com/wahidhendrawan/ThreatDock/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/wahidhendrawan/ThreatDock?sort=semver)](https://github.com/wahidhendrawan/ThreatDock/releases/latest)
+[![License](https://img.shields.io/github/license/wahidhendrawan/ThreatDock)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/wahidhendrawan/ThreatDock/badge)](https://scorecard.dev/viewer/?uri=github.com/wahidhendrawan/ThreatDock)
 [![Pages](https://img.shields.io/badge/docs-🌐-orange.svg)](https://wahidhendrawan.github.io/ThreatDock/)
 
 **Centralized Threat Intelligence & Security Alert Dashboard**
@@ -106,6 +105,8 @@ cp .env.example .env
 ```
 Edit `.env` and add your API keys to enable full intelligence enrichment. The default local administrator will be seeded using `AUTH_USER` and `AUTH_PASSWORD`.
 
+Set `SETTINGS_ENCRYPTION_KEY` (for example `openssl rand -hex 32`) before the first start; the backend refuses to store secret settings without it. Existing installs keep reading values encrypted under the old `JWT_SECRET`/built-in key derivation, and `docker compose exec backend node scripts/migrate-encrypt-credentials.js` re-encrypts them with the new key.
+
 ### 3. Deployment
 Run the entire stack using Docker:
 ```bash
@@ -118,7 +119,7 @@ PostgreSQL data is persisted on the host at `./data/postgres`. To override the d
 - **Dashboard**: `http://localhost:3000` / `https://frontend.threatdock.orb.local`
 - **Default login**: As configured in `.env` (`AUTH_USER` / `AUTH_PASSWORD`)
 - **API Documentation**: `http://localhost:3000/api/docs`
-- **Backend Health**: `http://localhost:5002/`
+- **Backend Health** (published on loopback only): `http://localhost:5002/`
 - **Liveness / readiness**: `http://localhost:5002/healthz` and `http://localhost:5002/readyz`
 - **Prometheus metrics**: `http://localhost:5002/metrics`
 
@@ -299,6 +300,10 @@ ThreatDock is designed to facilitate the **Blue Team** workflow. By aggregating 
 
 ## 🤝 Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Security
+
+Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
 ## 📄 License
 This project is licensed under the GNU General Public License v3.0.

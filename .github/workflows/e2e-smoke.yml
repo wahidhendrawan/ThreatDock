@@ -28,7 +28,7 @@ jobs:
     env:
       POSTGRES_PASSWORD: ci-smoke-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Prepare environment
         run: |
@@ -41,6 +41,7 @@ jobs:
           AUTH_USER=threatdock
           AUTH_PASSWORD=ci-smoke-admin-password
           JWT_SECRET=ci-smoke-test-secret
+          SETTINGS_ENCRYPTION_KEY=ci-smoke-settings-encryption-key
           EOF
           fi
 
@@ -86,6 +87,12 @@ jobs:
           echo "=== Auth config (unauthenticated) ==="
           curl -fsS http://localhost:5002/auth/config | head -c 200
           echo ""
+
+      # Match the npm major that writes the lockfiles (Dependabot, Docker images);
+      # the runner's default npm 10 rejects them as out of sync.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
 
       - name: Install Playwright
         working-directory: frontend

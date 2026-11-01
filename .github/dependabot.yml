@@ -25,7 +25,9 @@ updates:
         dependency-type: development
 
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - /backend
+      - /frontend
     schedule:
       interval: monthly
 
@@ -33,3 +35,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: monthly

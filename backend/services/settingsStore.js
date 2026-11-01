@@ -1,43 +1,33 @@
 const crypto = require('crypto');
 
 const ENCRYPTED_PREFIX = 'enc:v1:';
-const LOCAL_FALLBACK_KEY = 'threatdock-local-settings-key-change-in-production';
+// Decrypt-only: older releases encrypted with this public constant or with JWT_SECRET.
+const LEGACY_FALLBACK_KEY = 'threatdock-local-settings-key-change-in-production';
 
 function isSecretKey(key) {
-  if (key === 'JWT_SECRET') return false;
   return /API_KEY|TOKEN|SECRET|WEBHOOK_URL|PASSWORD/i.test(key);
 }
 
-function resolveKeyMaterial() {
-  if (process.env.SETTINGS_ENCRYPTION_KEY) {
-    return { material: process.env.SETTINGS_ENCRYPTION_KEY, source: 'SETTINGS_ENCRYPTION_KEY' };
-  }
-  if (process.env.JWT_SECRET) {
-    return { material: process.env.JWT_SECRET, source: 'JWT_SECRET' };
-  }
-  return { material: LOCAL_FALLBACK_KEY, source: 'fallback' };
-}
-
-// Warn once if secrets are being protected by the insecure built-in fallback key.
-let fallbackWarned = false;
-function warnIfInsecureKey(source) {
-  if (source === 'fallback' && !fallbackWarned && process.env.NODE_ENV === 'production') {
-    fallbackWarned = true;
-    console.warn(
-      '[settingsStore] SECURITY: neither SETTINGS_ENCRYPTION_KEY nor JWT_SECRET is set. ' +
-      'Stored credentials are encrypted with a public fallback key and are NOT secure. ' +
-      'Set SETTINGS_ENCRYPTION_KEY before storing production secrets.'
-    );
-  }
+function deriveKey(material) {
+  return crypto.createHash('sha256').update(material).digest();
 }
 
 function encryptionKey() {
-  const { material, source } = resolveKeyMaterial();
-  warnIfInsecureKey(source);
-  return crypto
-    .createHash('sha256')
-    .update(material)
-    .digest();
+  if (!process.env.SETTINGS_ENCRYPTION_KEY) {
+    throw new Error(
+      'SETTINGS_ENCRYPTION_KEY is not set. Generate one with `openssl rand -hex 32` ' +
+      'and set it in the backend environment before storing secret settings.'
+    );
+  }
+  return deriveKey(process.env.SETTINGS_ENCRYPTION_KEY);
+}
+
+// Current key first, then the legacy derivations so existing ciphertext stays readable
+// until it is re-encrypted on the next write.
+function decryptionKeys() {
+  return [process.env.SETTINGS_ENCRYPTION_KEY, process.env.JWT_SECRET, LEGACY_FALLBACK_KEY]
+    .filter(Boolean)
+    .map(deriveKey);
 }
 
 function encryptValue(key, value) {
@@ -53,18 +43,20 @@ function encryptValue(key, value) {
 function decryptValue(value) {
   const text = String(value ?? '');
   if (!text.startsWith(ENCRYPTED_PREFIX)) return text;
-  try {
-    const payload = text.slice(ENCRYPTED_PREFIX.length);
-    const [ivB64, tagB64, dataB64] = payload.split(':');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(ivB64, 'base64'));
-    decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
-    return Buffer.concat([
-      decipher.update(Buffer.from(dataB64, 'base64')),
-      decipher.final()
-    ]).toString('utf8');
-  } catch {
-    return '';
+  const [ivB64, tagB64, dataB64] = text.slice(ENCRYPTED_PREFIX.length).split(':');
+  for (const key of decryptionKeys()) {
+    try {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64'));
+      decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
+      return Buffer.concat([
+        decipher.update(Buffer.from(dataB64, 'base64')),
+        decipher.final()
+      ]).toString('utf8');
+    } catch {
+      // Wrong key or tampered value: try the next candidate.
+    }
   }
+  return '';
 }
 
 function getSettings(db) {

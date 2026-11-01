@@ -6,7 +6,7 @@ jobs:
     env:
       POSTGRES_PASSWORD: ci-validate-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Create env files for validation
         run: |
           find . -name '*.env.example' -exec sh -c 'cp "$1" "${1%.example}"' _ {} \;
@@ -18,10 +18,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24
       - name: Install dependencies
         working-directory: backend
         run: npm ci
@@ -41,7 +41,7 @@ jobs:
         working-directory: backend
         run: npx jest --forceExit --no-cache --passWithNoTests --coverage --coverageReporters=json-summary --coverageReporters=lcov 2>&1
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: ./backend/coverage/lcov.info
           flags: unittests
@@ -66,10 +66,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
       - name: Install dependencies
         working-directory: frontend
         run: npm ci

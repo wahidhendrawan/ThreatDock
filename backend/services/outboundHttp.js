@@ -144,9 +144,12 @@ async function assertOutboundUrl(value) {
   return url;
 }
 
-function guardedLookup(hostname, _options, callback) {
+function guardedLookup(hostname, options, callback) {
+  // Node's autoSelectFamily (default since v20) asks for `all: true` and expects an array.
   resolvePublicAddresses(hostname)
-    .then(records => callback(null, records[0].address, records[0].family))
+    .then(records => (options && options.all
+      ? callback(null, records)
+      : callback(null, records[0].address, records[0].family)))
     .catch(error => callback(error));
 }
 

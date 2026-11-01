@@ -28,6 +28,7 @@ const { DeadLetterQueue } = require('./services/deadLetterQueue');
 const { pruneOldAuditLogs } = require('./services/audit');
 
 const authMiddleware = require('./middleware/auth');
+const { requireRole } = require('./services/identity');
 const rateLimit = require('./middleware/rateLimit');
 const rssService = require('./services/rss');
 const osintService = require('./services/osint');
@@ -57,7 +58,11 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();
 });
-app.use(cors());
+// The bundled nginx frontend proxies the API on the same origin; list any other
+// browser origins that call the backend directly (comma-separated).
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000')
+  .split(',').map(origin => origin.trim()).filter(Boolean);
+app.use(cors({ origin: CORS_ORIGINS }));
 
 app.use(tracing.traceContextMiddleware);
 app.use(observability.requestIdMiddleware);
@@ -96,7 +101,9 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
-// Trust proxy for correct IP detection behind nginx
+// Trust exactly one hop: the frontend nginx container, which appends the client
+// address to X-Forwarded-For. req.ip is then the address nginx saw, not a value
+// the client supplied.
 app.set('trust proxy', 1);
 
 // Initialize error monitoring (global handlers + express middleware)
@@ -105,11 +112,12 @@ errorMonitor.init(app);
 // Create HTTP server and WebSocket
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: CORS_ORIGINS, methods: ['GET', 'POST'] }
 });
 
 // Initialize PostgreSQL database adapter
 const db = createDatabase();
+io.use(authMiddleware.socketAuth(db));
 const jobQueue = new JobQueue();
 const deadLetterQueue = new DeadLetterQueue(db);
 
@@ -795,15 +803,16 @@ app.get('/api/version', (req, res) => {
   });
 });
 
-// Push notification endpoint (broadcasts to all WebSocket clients)
+// Push notification endpoint (broadcasts to the caller's tenant WebSocket clients)
 const notifyHandler = (req, res) => {
   const { title, body, severity } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Title is required' });
-  io.emit('push:notification', { title, body, severity: severity || 'info', timestamp: new Date().toISOString() });
+  io.to(`tenant:${req.tenant_id}`).emit('push:notification', { title, body, severity: severity || 'info', timestamp: new Date().toISOString() });
   res.json({ sent: true });
 };
-app.post('/api/notify', apiVersionHeader('legacy'), notifyHandler);
-app.post('/api/v1/notify', apiVersionHeader('v1'), notifyHandler);
+const notifyGuards = [apiLimiter, authMiddleware, requireRole('admin')];
+app.post('/api/notify', apiVersionHeader('legacy'), ...notifyGuards, notifyHandler);
+app.post('/api/v1/notify', apiVersionHeader('v1'), ...notifyGuards, notifyHandler);
 
 const intelligenceRouter = require('./routes/intelligence')(db);
 mountApi('/intelligence', apiLimiter, authMiddleware, intelligenceRouter);

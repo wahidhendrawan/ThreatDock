@@ -8,7 +8,6 @@ import PaginationControls, { usePagination } from './PaginationControls';
 
 function getAuthHeaders(authData) {
   if (authData?.token) return { Authorization: `Bearer ${authData.token}` };
-  if (authData?.basic) return { Authorization: `Basic ${btoa(`${authData.basic.user}:${authData.basic.pass}`)}` };
   return {};
 }
 

@@ -221,8 +221,9 @@ const swaggerSpec = {
     },
     '/api/notify': {
       post: {
-        summary: 'Send push notification to all WebSocket clients',
+        summary: 'Send push notification to WebSocket clients in your tenant (admin)',
         tags: ['System'],
+        security: [{ bearerAuth: [] }],
         requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' }, severity: { type: 'string' } } } } } },
         responses: { '200': { description: 'Notification sent' } }
       }
@@ -533,11 +534,12 @@ const swaggerSpec = {
     },
     '/api/users/{id}/mfa/setup': {
       post: {
-        summary: 'Generate MFA setup for user',
+        summary: 'Generate MFA setup for user (requires the caller\'s current password and MFA code)',
         tags: ['Users'],
         security: [{ bearerAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
-        responses: { '200': { description: 'MFA setup data (QR code)' } }
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { password: { type: 'string' }, code: { type: 'string' } } } } } },
+        responses: { '200': { description: 'MFA setup data (QR code)' }, '401': { description: 'Re-authentication failed' } }
       }
     },
     '/api/users/{id}/mfa/enable': {
@@ -582,9 +584,9 @@ const swaggerSpec = {
     },
     '/auth/setup-mfa': {
       post: {
-        summary: 'Setup MFA during login flow',
+        summary: 'Setup MFA during login flow (first enrollment only)',
         tags: ['Authentication'],
-        responses: { '200': { description: 'MFA setup data' } }
+        responses: { '200': { description: 'MFA setup data' }, '409': { description: 'MFA is already enrolled' } }
       }
     },
     '/auth/verify-mfa': {

@@ -132,6 +132,16 @@ module.exports = function createUsersRouter(db) {
     const isAdmin = normalizeRoles(req.user.roles).includes('admin');
     if (req.user.id !== id && !isAdmin) return res.status(403).json({ error: 'Unauthorized' });
     try {
+      // Step-up: a bearer token alone must not be enough to replace an MFA secret.
+      const { password, code } = req.body || {};
+      const caller = await dbGet(db, 'SELECT password_hash, mfa_enabled, mfa_secret FROM users WHERE id = ? AND tenant_id = ?', [req.user.id, req.tenant_id]);
+      if (!caller) return res.status(401).json({ error: 'Re-authentication failed' });
+      if (caller.password_hash && !bcrypt.compareSync(String(password || ''), caller.password_hash)) {
+        return res.status(401).json({ error: 'Current password is required' });
+      }
+      if (caller.mfa_enabled && caller.mfa_secret && !verifyMfaCode(code, caller.mfa_secret)) {
+        return res.status(401).json({ error: 'Current MFA code is required' });
+      }
       const user = await dbGet(db, 'SELECT id, username FROM users WHERE id = ? AND tenant_id = ?', [id, req.tenant_id]);
       if (!user) return res.status(404).json({ error: 'User not found' });
       const secret = generateSecret();

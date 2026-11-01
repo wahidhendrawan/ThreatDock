@@ -57,14 +57,32 @@ describe('API versioning', () => {
     expect(res.headers['x-api-version']).toBe('v1');
   });
 
-  test('Legacy /api/notify returns legacy version header', async () => {
-    const res = await request(app).post('/api/notify').send({ title: 'test' }).expect(200);
+  test('Legacy /api/notify requires authentication and keeps the legacy version header', async () => {
+    const res = await request(app).post('/api/notify').send({ title: 'test' }).expect(401);
     expect(res.headers['x-api-version']).toBe('legacy');
   });
 
-  test('Versioned /api/v1/notify returns v1 version header', async () => {
-    const res = await request(app).post('/api/v1/notify').send({ title: 'test' }).expect(200);
+  test('Versioned /api/v1/notify requires authentication and keeps the v1 version header', async () => {
+    const res = await request(app).post('/api/v1/notify').send({ title: 'test' }).expect(401);
     expect(res.headers['x-api-version']).toBe('v1');
+  });
+
+  test('/api/notify requires the admin role', async () => {
+    const jwt = require('jsonwebtoken');
+    const token = jwt.sign({ id: 5, tenant_id: 1 }, 'test-secret-key-for-testing');
+    const asRole = roles => mockDb.get.mockImplementationOnce((sql, params, cb) => cb(null, { id: 5, tenant_id: 1, username: 'u', roles }));
+
+    asRole('["viewer"]');
+    await request(app).post('/api/notify').set('Authorization', `Bearer ${token}`).send({ title: 't' }).expect(403);
+    asRole('["admin"]');
+    await request(app).post('/api/notify').set('Authorization', `Bearer ${token}`).send({ title: 't' }).expect(200);
+  });
+
+  test('CORS only reflects configured origins', async () => {
+    const allowed = await request(app).get('/api/version').set('Origin', 'http://localhost:3000');
+    expect(allowed.headers['access-control-allow-origin']).toBe('http://localhost:3000');
+    const denied = await request(app).get('/api/version').set('Origin', 'https://evil.example');
+    expect(denied.headers['access-control-allow-origin']).toBeUndefined();
   });
 
   test('Health endpoints do not have version headers', async () => {

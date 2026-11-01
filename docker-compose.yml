@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-threatdock}
       POSTGRES_USER: ${POSTGRES_USER:-threatdock}
@@ -15,9 +15,8 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    image: redis:7-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
+    # Internal only: the backend reaches it as redis://redis:6379 on the compose network.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -35,8 +34,16 @@ services:
       PGUSER: ${POSTGRES_USER:-threatdock}
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set, see .env.example}
       REDIS_URL: redis://redis:6379
+    # Loopback only: browsers go through the frontend nginx, which is the single
+    # proxy hop the backend trusts for X-Forwarded-For.
     ports:
-      - "5002:5002"
+      - "127.0.0.1:5002:5002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:5002/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,13 +54,14 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "3000:80"
+      - "3000:8080"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
   db-backup:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     entrypoint: >
       sh -c "echo '0 */6 * * * /usr/local/bin/backup.sh' > /etc/crontabs/root && crond -f -l 2"
     environment:

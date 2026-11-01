@@ -24,23 +24,23 @@ openssl rand -hex 32
 export SETTINGS_ENCRYPTION_KEY="your-generated-key-here"
 ```
 
-If not set, ThreatDock falls back to `JWT_SECRET`, then to a built-in key (insecure for production).
+`SETTINGS_ENCRYPTION_KEY` is required: without it the backend refuses to encrypt secrets (and therefore to start). There is no built-in fallback key.
 
-**Production warning**: The application logs a security warning on startup if using the insecure fallback key in `NODE_ENV=production`.
+**Upgrading**: older releases derived the key from `JWT_SECRET` or a built-in constant. Those derivations are still tried when decrypting, so existing values stay readable (keep `JWT_SECRET` set if you used it). Any value written afterwards is encrypted with `SETTINGS_ENCRYPTION_KEY`; run the migration script below to re-encrypt everything at once.
 
 ### Example .env
 
 ```bash
-# Required for production
-SETTINGS_ENCRYPTION_KEY=a4f3c8e9d2b7f1a6e8c5d9b3a7f2e1c8d6b4a9f7e3c1d8b5a2f6e9c4d7b1a8f3
+# Required: generate your own with `openssl rand -hex 32`, never reuse an example value
+SETTINGS_ENCRYPTION_KEY=<64 hex characters>
 
-# Fallback (also used for JWT signing)
+# Token signing only (legacy decryption fallback for values written by older releases)
 JWT_SECRET=your-jwt-secret-here
 ```
 
 ## Re-encrypting Existing Credentials
 
-If you're enabling encryption on an existing installation with plaintext secrets in the database:
+If you're upgrading an installation with plaintext secrets, or secrets encrypted with the legacy `JWT_SECRET`/built-in key:
 
 1. **Set the encryption key**:
    ```bash
@@ -57,7 +57,7 @@ If you're enabling encryption on an existing installation with plaintext secrets
    SELECT key, value FROM settings WHERE key LIKE '%API_KEY%' OR key LIKE '%TOKEN%';
    ```
 
-   All secret values should now start with `enc:v1:`.
+   All secret values (including `JWT_SECRET`) should now start with `enc:v1:`.
 
 ## Key Rotation
 
@@ -109,7 +109,7 @@ npm test -- __tests__/settingsStore.test.js
 21 tests cover:
 - Secret key detection
 - Encrypt/decrypt round-trips
-- Key fallback hierarchy
+- Legacy key fallback for decryption
 - Tamper detection
 - Edge cases (null, empty, re-encryption)
 
@@ -131,10 +131,6 @@ Example:
 }
 ```
 
-## Excluded Keys
+## JWT_SECRET
 
-`JWT_SECRET` is **not** encrypted because:
-1. It's used to derive the encryption key when `SETTINGS_ENCRYPTION_KEY` is unset
-2. Encrypting it with itself would be circular
-
-Store `JWT_SECRET` via environment variable rather than in the database.
+`JWT_SECRET` (the token-signing key stored in the settings table) is treated like any other secret: it is encrypted at rest and returned as `[redacted]` by `GET /api/settings`.
