@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
+    image: redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     # Internal only: the backend reaches it as redis://redis:6379 on the compose network.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
